@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../jobfiles"
+		},
+		{
+			"path": "../results"
+		},
+		{
+			"path": "../BAT_results"
+		}
+	],
+	"settings": {}
+}
