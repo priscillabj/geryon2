@@ -47,6 +47,7 @@ import numpy as np
 import pandas as pd
 from mpi4py import MPI
 
+from sf_keys import keys_for
 from newSF import SF_wnoise, SF_linmix, bpl_mcmc, parse_to_dict
 
 # ── model selection ───────────────────────────────────────────────────────────
@@ -88,55 +89,7 @@ CADENCES = tuple(CADENCE_FILES)        # fit order
 STAGE1_DIR = CADENCE_FILES["full"][0]
 STAGE2_DIR = CADENCE_FILES["crop"][0]
 
-MAX_BINS = 60
-
-# ── dictionary keys ──────────────────────────────────────────────────────────────────
-
-# Canonical cache keys. Both models follow the same shape as SF_linmix's
-# output: a leading '_' (the empty `phot` prefix) and a trailing model tag,
-# with maxerr/minerr for the +/- offsets from the median. bpl_mcmc returns
-# its own flat names (A, A_uperr, ...), so they are renamed on the way into
-# the cache - the science code in newSF.py is untouched.
-SPL_KEYS = [
-    "A_1_spl", "A_365_spl", "A_maxerr_spl", "A_minerr_spl",
-    "gamma_spl", "gamma_maxerr_spl", "gamma_minerr_spl",
-]
-
-BPL_KEYS = [
-    "A_1_bpl", "A_maxerr_bpl", "A_minerr_bpl",
-    "A_break_bpl", "A_break_maxerr_bpl", "A_break_minerr_bpl",
-    "gamma_bpl", "gamma_maxerr_bpl", "gamma_minerr_bpl",
-    "dt_break_bpl", "dt_break_maxerr_bpl", "dt_break_minerr_bpl",
-]
-KEYS = {
-    "spl":        SPL_KEYS,
-    "bpl":        BPL_KEYS,
-}
-# the slope column per model — what stage 5 averages and the checkers report
-GAMMA = {
-    "spl":        "gamma_spl",
-    "bpl":        "gamma_bpl",
-}
-
-# non-key columns every stage-3 JSONL row carries
-META_KEYS = ["object_index", "cadence", "model", "valid", "fail_reason"]
-
-def keys_for(model):
-    """Canonical FIT_KEYS list for a model name. Raises on typos rather than
-    returning a plausible-but-wrong list."""
-    try:
-        return list(KEYS[model])
-    except KeyError:
-        raise ValueError(f"unknown model {model!r}; expected one of {sorted(KEYS)}")
- 
- 
-def gamma_for(model):
-    try:
-        return GAMMA[model]
-    except KeyError:
-        raise ValueError(f"unknown model {model!r}; expected one of {sorted(GAMMA)}")
-    
-
+MAX_BINS = 60    
 
 FIT_KEYS = keys_for(MODEL)
 KEY_FROM = {k: k for k in FIT_KEYS}
@@ -264,18 +217,18 @@ def run_fit(sf_dict, ra, dec, band, oi, cadence):
     signal.alarm(TIMEOUT)
     try:
         if MODEL == "spl":
-            fit = SF_linmix(sf_dict)            # mutates + returns sf_dict
+            fit = SF_linmix(sf_dict,path=OUTPUT_PATH+f'plots/{oi}_{cadence}_')            # mutates + returns sf_dict
         else:
             # bpl_mcmc indexes old_dict['RA'] directly and returns a NEW dict.
             # emcee's progress bar is hardcoded on -> silence stderr for the call.
             sf_dict["RA"] = ra
             with open(os.devnull, "w") as devnull, \
                     contextlib.redirect_stderr(devnull):
-                    # per-source PNG next to the output pkl (unique per input, avoids RA/band collisions)
-        
-                fit = bpl_mcmc(sf_dict, initial_guess=BPL_P0,path=OUTPUT_PATH+'plots/',
+                # per-source PNG next to the output pkl (unique per input, avoids RA/band collisions)
+
+                fit = bpl_mcmc(sf_dict, initial_guess=BPL_P0,path=OUTPUT_PATH+f'plots/{oi}_{cadence}_',
                                model_check=False, mcmc_check=False, plot=False,
-                               progress=False, save_plot=True,verbose=False)
+                               progress=False, save_plot=False,verbose=False,model='at_break')
     except FitTimeout:
         print(f"[rank {rank}] TIMEOUT (> {TIMEOUT}s) {ra}_{dec}_z{band} "
               f"sim {oi} {cadence} [{MODEL}]", flush=True)

@@ -1,11 +1,12 @@
 """
-plot_stage3.py — visual check of cached SFs and LinMix fits, straight from the
+check_plot_stage3.py — visual check of cached SFs and LinMix fits, straight from the
 stage-3 cache. No LC reads, no SF recomputation, no MCMC (the power-law
 overlay uses the cached _A_365_spl / _gamma_spl, same as newSF.plot_SF).
 
 Usage (serial, compute node, conda env with newSF importable):
-    python plot_stage3.py <ra> <dec> <band>                # grid: first 6 sims, both cadences
-    python plot_stage3.py <ra> <dec> <band> <oi>           # one sim, both cadences
+    python check_plot_stage3.py --spl <ra> <dec> <band>                # grid: first 6 sims, both cadences
+    python check_plot_stage3.py --bpl <ra> <dec> <band> <oi>           # one sim, both cadences
+    python check_plot_stage3.py --bpl --all <oi>                       # one sim, all sources, both cadences
     python plot_stage3.py <ra> <dec> <band> <oi> --posterior
         # additionally re-runs the seeded LinMix fit for this sim and saves the
         # six-panel diagnostic via newSF.plot_linmix machinery (needs linmix).
@@ -30,12 +31,17 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from newSF import parse_to_dict
+from newSF import parse_to_dict,broken_power_law_flat
+from sf_keys import keys_for, gamma_for
+
+MODE     = "bpl" if "--bpl" in sys.argv else "spl"     # default spl
+PREFIX   = "fit" if MODE == "spl" else "fitbpl"
+GAMMA    = gamma_for(MODE)                              # 'gamma_spl' | 'gamma_bpl'
 
 CACHE    = os.environ["HOME"] + "/results/20yr_lc/sf_cache/"
 PLOTS    = CACHE + "plots/"
 # CADENCES = ("full", "crop")
-CADENCES = ("full", "crop", "ztf_dur")
+CADENCES = ("full", "crop", "ztfdur")
 FIT_WINDOW = (1.0, 365.0)          # SF_linmix fitting window [days]
 
 os.makedirs(PLOTS, exist_ok=True)
@@ -54,7 +60,7 @@ def all_sources():
 
 def load_fits(ra, dec, band):
     rows = []
-    for p in sorted(glob.glob(CACHE + f"fit_{ra}_{dec}_z{band}_rank*.jsonl")):
+    for p in sorted(glob.glob(CACHE + f"{PREFIX}_{ra}_{dec}_z{band}_rank*.jsonl")):
         with open(p) as fh:
             for line in fh:
                 if line.strip():
@@ -85,21 +91,37 @@ def plot_one(ax, sf_row, fit_row, cadence, color):
     mid, half, sfv = sf_points(sf_row["SF"])
     _, _, maxe = sf_points(sf_row["SFmaxerr"])
     _, _, mine = sf_points(sf_row["SFminerr"])
-    # error series can have different NaN patterns; align by reindexing on SF
+    # error series can have different NaN patterns; align by truncating to SF
     n = min(len(sfv), len(maxe), len(mine))
 
     ax.errorbar(mid[:n], sfv[:n], xerr=half[:n], yerr=(mine[:n], maxe[:n]),
                 fmt="o", ms=4, capsize=2, c=color, label=f"SF ({cadence})")
 
     if fit_row is not None and bool(fit_row["valid"]):
-        A365, gam = fit_row["_A_365_spl"], fit_row["_gamma_spl"]
-        in_win = (mid >= FIT_WINDOW[0]) & (mid <= FIT_WINDOW[1])
-        dtl = np.logspace(np.log10(max(mid[in_win].min(), FIT_WINDOW[0])),
-                          np.log10(min(mid[in_win].max(), FIT_WINDOW[1])), 100) \
-              if in_win.any() else np.logspace(0, np.log10(365), 100)
-        ax.plot(dtl, A365 * (dtl / 365.0) ** gam, "-", lw=2, c="crimson",
-                label=f"fit: γ={gam:.2f}, A₃₆₅={A365:.3f}")
-        ax.axvspan(*FIT_WINDOW, alpha=0.06, color="grey")
+        if MODE == "spl":
+            # single power law A_365 * (dt/365)^gamma, drawn over the fit window
+            A365 = fit_row["A_365_spl"]
+            gam  = fit_row["gamma_spl"]
+            in_win = (mid >= FIT_WINDOW[0]) & (mid <= FIT_WINDOW[1])
+            dtl = (np.logspace(np.log10(max(mid[in_win].min(), FIT_WINDOW[0])),
+                               np.log10(min(mid[in_win].max(), FIT_WINDOW[1])), 100)
+                   if in_win.any() else np.logspace(0, np.log10(365), 100))
+            ax.plot(dtl, A365 * (dtl / 365.0) ** gam, "-", lw=2, c="crimson",
+                    label=f"SPL: γ={gam:.2f}, A₃₆₅={A365:.3f}")
+            ax.axvspan(*FIT_WINDOW, alpha=0.06, color="grey")
+        else:
+            # broken power law: A_1 * dt^gamma below the break, flat above.
+            # broken_power_law_flat takes A_1 (amplitude at dt=1), NOT A_break.
+            # Draw across the whole observed lag range so the break is visible.
+            A1  = fit_row["A_1_bpl"]
+            gam = fit_row["gamma_bpl"]
+            bk  = fit_row["dt_break_bpl"]
+            lo  = max(mid[mid > 0].min(), 0.5) if (mid > 0).any() else 1.0
+            hi  = max(mid.max(), bk * 1.5)
+            dtl = np.logspace(np.log10(lo), np.log10(hi), 200)
+            ax.plot(dtl, broken_power_law_flat(dtl, A1, gam, bk), "-", lw=2,
+                    c="crimson", label=f"BPL: γ={gam:.2f}, brk={bk:.0f}d")
+            ax.axvline(bk, ls=":", c="black", lw=1)
     elif fit_row is not None:
         ax.set_title(ax.get_title() + f"  [INVALID: {fit_row['fail_reason']}]",
                      fontsize=8, color="crimson")
@@ -117,7 +139,7 @@ def grid(ra, dec, band, ois):
         print(f"no cache for {tag}")
         return
     
-    cad_colors = {"full": "#436BAD", "crop": "orange", "ztf_dur": "#2CA02C"}
+    cad_colors = {"full": "#436BAD", "crop": "orange", "ztfdur": "#2CA02C"}
  
     fig, axes = plt.subplots(len(ois), len(CADENCES),
                              figsize=(5.5 * len(CADENCES), 3.2 * len(ois)),
@@ -137,9 +159,9 @@ def grid(ra, dec, band, ois):
             plot_one(ax, srow.iloc[0],
                      frow.iloc[0] if len(frow) else None,
                      cad, color=cad_colors.get(cad, "grey"))
-    fig.suptitle(f"{tag}: cached SF + cached LinMix fit")
+    fig.suptitle(f"{tag}: cached SF + cached {MODE.upper()} fit")
     fig.tight_layout()
-    out = PLOTS + f"sffit_{tag}_sims{ois[0]}-{ois[-1]}.png"
+    out = PLOTS + f"sffit_{MODE}_{tag}_sims{ois[0]}-{ois[-1]}.png"
     fig.savefig(out, dpi=120, bbox_inches="tight")
     print(f"plot -> {out}")
 
@@ -161,26 +183,30 @@ def posterior(ra, dec, band, oi):
         seed = int(hashlib.md5(
             f"{ra}_{dec}_{band}_{oi}_{cad}".encode()).hexdigest()[:8], 16) & 0x7FFFFFFF
         np.random.seed(seed)
-        out_prefix = PLOTS + f"posterior_{tag}_{oi}_{cad}_"
+        out_prefix = PLOTS + f"posterior_{MODE}_{tag}_{oi}_{cad}_"
         res = SF_linmix(d, save_plot=True, path=out_prefix)
         print(f"{tag} sim {oi} {cad}: "
               f"{'ok, plots at ' + out_prefix + '*' if res else 'fit skipped/failed'}")
 
 
 if __name__ == "__main__":
-    a = sys.argv[1:]
-    if a and a[0] == "--all":
+    a = [x for x in sys.argv[1:] if not x.startswith("--")]   # positionals only
+    flags = set(x for x in sys.argv[1:] if x.startswith("--"))
+
+    if "--all" in flags:
         srcs = all_sources()
-        ois = [int(a[1])] if len(a) >= 2 else [0, 1, 2, 3, 4, 5]
+        ois = [int(a[0])] if a else [0, 1, 2, 3, 4, 5]
         print(f"{len(srcs)} cached sources, sims {ois}")
         for ra, dec, band in srcs:
             grid(ra, dec, band, ois)
         sys.exit(0)
-    
+
     ra, dec, band = float(a[0]), float(a[1]), a[2]
-    if len(a) >= 4 and a[3] != "--posterior":
+    if len(a) >= 4:
         oi = int(a[3])
-        if "--posterior" in a:
+        if "--posterior" in flags:
+            if MODE != "spl":
+                sys.exit("--posterior re-runs SF_linmix and is SPL-only; drop --bpl")
             posterior(ra, dec, band, oi)
         else:
             grid(ra, dec, band, [oi])

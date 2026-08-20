@@ -59,6 +59,6 @@ if __name__ == "__main__":
     missing = [r for r in results if r is not None]
     print(f"\ntotal: {len(missing)}")
     mis_tgt = pd.DataFrame(missing, columns=["ra", "dec", "band", "path"])
-    mis_tgt.to_parquet(os.path.expanduser("~/missing_target_ref.parquet"))
+    mis_tgt.to_parquet(os.path.expanduser("~/BAT_results/missing_targetBAT.parquet"))
 
 #executado com qsub missing_target.sh

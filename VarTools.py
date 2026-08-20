@@ -133,14 +133,14 @@ def _running_mad(grp: pd.DataFrame, edges: np.ndarray):
 
 # ── core functions ────────────────────────────────────────────────────────────
 
-def aggregate_lightcurves(df: pd.DataFrame) -> pd.DataFrame:
+def aggregate_lightcurves(df: pd.DataFrame, mag_column='MAG_4_TOT_AB') -> pd.DataFrame:
     """Aggregate per-object statistics from the light curve DataFrame."""
     return (
         df.groupby("object_index")
         .agg(
-            n_org=('MAG_4_TOT_AB', "count"),
-            med=('MAG_4_TOT_AB',   "median"),
-            std=('MAG_4_TOT_AB',   "std"),
+            n_org=(mag_column, "count"),
+            med=(mag_column,   "median"),
+            std=(mag_column,   "std"),
         )
         .dropna(subset=["std"])
     )
@@ -234,6 +234,7 @@ def plot_sigma_locus(agg_df: pd.DataFrame,
 
     if highlight:
         sub  = agg_df.loc[agg_df.index.isin(highlight)]
+        #sub = agg_df[agg_df['object_index'].isin(highlight)]
         print(sub[["sigma_level"]])
         cmap = plt.cm.get_cmap("tab10", len(sub))
         for i, (idx, row) in enumerate(sub.iterrows()):
@@ -256,9 +257,10 @@ def plot_sigma_locus(agg_df: pd.DataFrame,
 
     if save_plot:
         name_list  = filename.rsplit('/', 1)
-        add_dir    = f'/{ra}_{dec}/' if (ra is not None and dec is not None) else ''
+        # add_dir    = f'/{ra}_{dec}/' if (ra is not None and dec is not None) else ''
+        add_dir    = f'/sigma_filter/plots/' #if (ra is not None and dec is not None) else ''
         subpath    = name_list[0] + add_dir
-        os.makedirs(subpath, exist_ok=True)
+        # os.makedirs(subpath, exist_ok=True)
         name_clean = subpath + 'precision_sigma_' + name_list[1].replace('.parquet', '.png')
         print(name_clean)
         plt.savefig(name_clean)
@@ -296,10 +298,19 @@ def plot_outlier_lightcurves(df: pd.DataFrame,
         # print(name_clean)
         plt.savefig(name_clean)
 
+from dataclasses import dataclass
 
-def remove_outliers(df: pd.DataFrame, agg_df: pd.DataFrame,verbose=False) -> pd.DataFrame:
+@dataclass
+class SigmaDiag:
+    agg_df: pd.DataFrame
+    cx: np.ndarray
+    my: np.ndarray
+    sigma: np.ndarray
+    tgt_obj_idx: int | None = None
+
+def remove_outliers(df: pd.DataFrame, agg_df: pd.DataFrame,max_level=3,verbose=False) -> pd.DataFrame:
     """Return df with all >3σ objects removed."""
-    outliers = agg_df[agg_df["sigma_level"] == 4].index
+    outliers = agg_df[agg_df["sigma_level"] == max_level].index
     if verbose:
         print(outliers)
 
@@ -316,6 +327,7 @@ def run_sigma_filtering(df: pd.DataFrame,
                         ra: float | None = None,
                         dec: float | None = None,
                         agn_indices: np.ndarray | None = None,
+                        max_level: int = 3 , 
                         plot: bool = False,
                         save_plt: bool = False,
                         save_file: bool = False,
@@ -337,12 +349,15 @@ def run_sigma_filtering(df: pd.DataFrame,
     # if ra is not None and dec is not None:
         # srcs        = df.groupby('object_index')[['ALPHAWIN_REF', 'DELTAWIN_REF']].first().dropna()
         # tgt_obj_idx = _find_target_obj(ra, dec, df)
-    if (agn_indices is None) and (ra is not None) and (dec is not None):
-        tgt_obj_idx = _find_target_obj(ra, dec, df)
+    # if (agn_indices is None) and (ra is not None) and (dec is not None):
+    #     tgt_obj_idx = _find_target_obj(ra, dec, df)
+    if (agn_indices is None) and (filename is not None) and (ra is not None) and (dec is not None):
+        coord =SkyCoord(ra, dec, unit='deg')
+        tgt_obj_idx = _find_target_obj(Path(filename), coord)
     # else:
     #     print('agn object_index or coordinates must be provided')
 
-    clean_df = remove_outliers(df, agg_df)
+    clean_df = remove_outliers(df, agg_df,max_level=max_level)
 
     if plot or save_plt:
         
@@ -365,7 +380,8 @@ def run_sigma_filtering(df: pd.DataFrame,
             print(f"file {name_clean} successfully saved")
             clean_df.to_parquet(name_clean)
 
-    return clean_df
+    # return clean_df
+    return (clean_df, SigmaDiag(agg_df, cx_arr, my_arr, sigma_arr, tgt_obj_idx))# if return_diag else clean_df
 
 
 # ── usage ─────────────────────────────────────────────────────────────────────

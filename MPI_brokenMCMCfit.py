@@ -30,12 +30,16 @@ from newSF import bpl_mcmc
 
 # ── configuration ─────────────────────────────────────────────────────────────
 X          = 10                                    # must match the optSF run
+# MODEL      = "flat"                                 # "flat" (A at dt=1) or "at_break" (A at break)
+MODEL      = "at_break"                                 # "flat" (A at dt=1) or "at_break" (A at break)
 INPUT_GLOB = os.environ["HOME"] + f"/results/partials/*/*_{X}cs.pkl"
-FIT_SUFFIX = "_bplfit.pkl"                          # output: <input stem> + this
+FIT_SUFFIX = f"_bpl_{MODEL}fit.pkl"                 # output: <input stem> + this (model in name)
 TIMEOUT_S  = 300
-MTIME_DAY  = None                                   # None = no date filter;
+# MTIME_DAY  = None                                   # None = no date filter;
+MTIME_DAY  = "2026-08-18"                                   # None = no date filter;
                                                     # else "YYYY-MM-DD" to subset
-SAVE_PLOT  = True                                  # save per-source bpl fit PNGs
+N_SOURCES = None
+SAVE_PLOT  = False                                  # save per-source bpl fit PNGs
 VERBOSE    = False                                  # per-fit prints (spams the log)
 
 TAG_WORK, TAG_RESULT, TAG_STOP = 1, 2, 3
@@ -64,7 +68,7 @@ def build_file_list():
         f for f in glob.glob(INPUT_GLOB)
         if not f.endswith(FIT_SUFFIX)              # never refit our own outputs
         and "_linmixfit" not in f                  # nor the linmix driver's outputs
-    )
+    )[:N_SOURCES]
 
     if MTIME_DAY is not None:
         target = datetime.date.fromisoformat(MTIME_DAY)
@@ -75,7 +79,7 @@ def build_file_list():
         print(f"[master] date filter {MTIME_DAY}: {len(all_files)} files match",
               flush=True)
 
-    todo = [f for f in all_files if not os.path.exists(out_name(f))]
+    todo = [f for f in all_files]# if not os.path.exists(out_name(f))]
     print(f"[master] {len(all_files)} SF pkl files found, "
           f"{len(all_files) - len(todo)} already fitted, {len(todo)} to do",
           flush=True)
@@ -95,7 +99,7 @@ def process(pkl_file):
     try:
         fitted = bpl_mcmc(sf_dict, plot=False, model_check=False, mcmc_check=False,
                           progress=False, save_plot=SAVE_PLOT, path=plot_path,
-                          verbose=VERBOSE)
+                          verbose=VERBOSE, model=MODEL)
     finally:
         signal.alarm(0)
 

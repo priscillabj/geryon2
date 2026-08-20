@@ -11,9 +11,24 @@ recomputed here, so the figures cannot disagree with out['metrics'].
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 BAND_COLOR = {'g': 'mediumseagreen', 'r': 'firebrick', 'i': 'goldenrod'}
 STAR_COLOR = '#9F9F9F'
+
+
+def _save(fig, save, dpi=150):
+    """Write fig to `save` (creating parent dirs) and close it; return the path."""
+    if not save:
+        return None
+    import os
+    path = os.path.expanduser(save)
+    parent = os.path.dirname(os.path.abspath(path))
+    os.makedirs(parent, exist_ok=True)
+    fig.savefig(path, dpi=dpi, bbox_inches='tight')
+    plt.close(fig)
+    print(f'wrote {path}')
+    return path
 
 
 def _tags(out, tags):
@@ -56,8 +71,11 @@ def _hist_panel(ax, out, tag, color):
     """Star ZMAD distribution with the AGN marked."""
     m = out['metrics'][tag]
     v = m['star_stat'].values
+    n_pre = m.get('n_stars_preclip', len(v))
+    clip_note = f'; {n_pre - len(v)} clipped' if n_pre > len(v) else ''
     ax.hist(v, bins=min(30, max(10, len(v) // 5)), alpha=0.7,
-            color=STAR_COLOR, edgecolor='black', label=f'stars (N={len(v)})')
+            color=STAR_COLOR, edgecolor='black',
+            label=f'stars in stats: {len(v)}/{n_pre}{clip_note}')
 
     mu, sd = m['cs_mean'], m['cs_std']
     ax.axvline(mu, color='black', linestyle='-.', linewidth=2)
@@ -81,7 +99,7 @@ def _lc_panel(ax, a, s, out, tag, color):
 
     ax.errorbar(s['mjd'], s[val], yerr=_err(s, m), fmt='o', ms=3,
                 c=STAR_COLOR, alpha=0.15, zorder=1,
-                label=f"stars (N={s['object_index'].nunique()})")
+                label=f"stars plotted: {s['object_index'].nunique()}")
     ax.errorbar(a['mjd'], a[val], yerr=_err(a, m), fmt='o', ms=4,
                 color=color, zorder=3, label=f"AGN (z{out['band']})")
 
@@ -108,7 +126,7 @@ def zmad_hist(out, tags=None, figsize=(5.5, 4)):
     return fig, axes
 
 
-def zmad_plots(agn, stars, out, tag=None, figsize=(12, 5)):
+def zmad_plots(agn, stars, out, tag=None, figsize=(12, 5), save=None, dpi=150):
     """Light curve + ZMAD histogram for one aperture (default: the first)."""
     tag = _tags(out, tag)[0]
     color = BAND_COLOR.get(out['band'], 'mediumseagreen')
@@ -118,6 +136,7 @@ def zmad_plots(agn, stars, out, tag=None, figsize=(12, 5)):
     fig.suptitle(f"{_title(out, tag)}   obj {out['object_index']}",
                  fontsize=12, fontweight='bold')
     fig.tight_layout()
+    _save(fig, save, dpi)
     return fig, axes
 
 
@@ -136,57 +155,328 @@ def save_all(agn, stars, out, tag=None, outdir='.', dpi=120):
     plt.close(fig)
     return path
 
+
 # ---------------------------------------------------------------- population
- 
- 
-def zmad_summary(df, aperture=None, sigma_cut=3.0, clip=99.5, figsize=(12, 9)):
+
+
+def zmad_summary(df, aperture=None, prefix='', sigma_cut=3.0, clip=99.5,
+                 figsize=(12, 9), save=None, dpi=150):
     """Population view of a zmad results parquet (no recompute needed).
- 
+
         df = pd.read_parquet('~/results/zmad_sub_g.parquet')
         zmad_summary(df)
- 
+
     Panels: sigma distribution, percentile distribution, and sigma against
     n_stars and n_epochs -- the last two are the ones that matter, because a
     trend there means the metric is tracking the comparison sample rather than
     the source.
     """
-    d = df[df.get('ok', True) == True].copy()                      # noqa: E712
+    sig, perc = f'{prefix}sigma', f'{prefix}perc'
+    keys = (f'{prefix}n_stars', f'{prefix}n_epochs')
+    d = _ok(df, f'{prefix}ok').copy()
     if 'aperture' in d:
         aperture = aperture if aperture is not None else sorted(d['aperture'].dropna())[0]
         d = d[d['aperture'] == aperture]
-    d = d[np.isfinite(d['sigma'])]
+    d = d[np.isfinite(d[sig])]
     if d.empty:
         raise ValueError('no finite sigma rows')
- 
-    hi = np.percentile(d['sigma'], clip)
-    n_over = int((d['sigma'] > hi).sum())
-    n_det = int((d['sigma'] > sigma_cut).sum())
- 
+
+    hi = np.percentile(d[sig], clip)
+    n_over = int((d[sig] > hi).sum())
+    n_det = int((d[sig] > sigma_cut).sum())
+
     fig, ax = plt.subplots(2, 2, figsize=figsize)
- 
+
     a = ax[0, 0]
-    a.hist(d['sigma'].clip(upper=hi), bins=50, color=STAR_COLOR, edgecolor='black')
+    a.hist(d[sig].clip(upper=hi), bins=50, color=STAR_COLOR, edgecolor='black')
     a.axvline(sigma_cut, color='red', linestyle='--', lw=2,
               label=f'{sigma_cut:g}σ  ({n_det}/{len(d)} = {100*n_det/len(d):.0f}%)')
     a.set(xlabel=f'σ (clipped at {hi:.1f}; {n_over} above)',
           ylabel='sources', yscale='log')
     a.legend(fontsize=9)
- 
+
     a = ax[0, 1]
-    a.hist(d['perc'], bins=50, color=STAR_COLOR, edgecolor='black')
+    a.hist(d[perc], bins=50, color=STAR_COLOR, edgecolor='black')
     a.set(xlabel='percentile of AGN within its star pool', ylabel='sources')
- 
-    for a, key in ((ax[1, 0], 'n_stars'), (ax[1, 1], 'n_epochs')):
-        a.scatter(d[key], d['sigma'].clip(upper=hi), s=8, alpha=0.4, color='black')
+
+    for a, key in zip((ax[1, 0], ax[1, 1]), keys):
+        if key not in d:
+            a.set_axis_off()
+            continue
+        a.scatter(d[key], d[sig].clip(upper=hi), s=8, alpha=0.4, color='black')
         a.axhline(sigma_cut, color='red', linestyle='--', lw=1)
         a.set(xlabel=key, ylabel='σ', yscale='symlog')
         if d[key].nunique() > 2:
-            r = np.corrcoef(d[key], d['sigma'])[0, 1]
+            r = np.corrcoef(d[key], d[sig])[0, 1]
             a.set_title(f'r = {r:+.2f}', fontsize=10,
                         color='red' if abs(r) > 0.3 else 'black')
- 
+
     fig.suptitle(f'ZMAD population  |  aperture {aperture}  |  N = {len(d)}',
                  fontsize=13)
     fig.tight_layout()
+    _save(fig, save, dpi)
     return fig, ax
- 
+
+
+# ------------------------------------------------------------ by AGN type
+
+# Seyfert palette; extend or override with the `colors` argument.
+TYPE_COLOR = {
+    'Sy1': '#9F9F9F', 'Sy1.2': 'white', 'Sy1.5': 'skyblue',
+    'Sy1.8': 'orchid', 'Sy1.9': 'mediumvioletred', 'Sy2': '#4A0E2E',
+}
+TYPE_HATCH = {'Sy1': '', 'Sy1.2': '///'}
+
+# coarse bins, in plotting order; shared by the histogram and the fraction plot
+TYPE_GROUPS = {
+    'Type 1 (Sy1-1.2)': ['Sy1', 'Sy1.2'],
+    'Sy1.5': ['Sy1.5'],
+    'Type 2 (Sy1.8-1.9-2)': ['Sy1.8', 'Sy1.9', 'Sy2'],
+}
+GROUP_COLOR = {'Type 1 (Sy1-1.2)': 'black', 'Sy1.5': 'C2',
+               'Type 2 (Sy1.8-1.9-2)': 'C1'}
+
+
+def _ok(d, ok_col):
+    """Drop failed rows when an ok column exists; pass everything through if not."""
+    return d[d[ok_col] == True] if ok_col in d else d                  # noqa: E712
+
+
+def zmad_census(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
+                fail_col=None, groups=None, log=True, verbose=True):
+    """Where rows go between the input table and the histogram.
+
+    Returns (funnel, fails): `funnel` is a Series of surviving counts after each
+    filter, `fails` is the fail_reason breakdown of the rows dropped by the ok
+    cut (empty if there is no fail column).
+    """
+    sigma_col = sigma_col or f'{prefix}sigma'
+    ok_col = ok_col or f'{prefix}ok'
+    fail_col = fail_col or f'{prefix}fail_reason'
+    groups = groups or TYPE_GROUPS
+    lut = {t: g for g, m in groups.items() for t in m}
+
+    step = {'rows in table': len(d)}
+    fails = pd.Series(dtype='int64')
+    if ok_col in d:
+        bad = d[d[ok_col] != True]                                     # noqa: E712
+        if fail_col in d and len(bad):
+            fails = bad[fail_col].fillna('(no reason recorded)').value_counts()
+        d = d[d[ok_col] == True]                                       # noqa: E712
+        step[f'{ok_col} is True'] = len(d)
+    if type_col in d:
+        d = d[d[type_col].notna()]
+        step[f'{type_col} present'] = len(d)
+    d = d[np.isfinite(d[sigma_col])]
+    step[f'{sigma_col} finite'] = len(d)
+    d = d[d[type_col].map(lut).notna()]
+    step['class in groups'] = len(d)
+    if log:
+        d = d[d[sigma_col] > 0]
+        step[f'{sigma_col} > 0 (log)'] = len(d)
+
+    funnel = pd.Series(step)
+    if verbose:
+        out = pd.DataFrame({'kept': funnel, 'lost': -funnel.diff().fillna(0).astype(int)})
+        print(out.to_string())
+        if len(fails):
+            print('\nreasons for not-ok rows:')
+            print(fails.to_string())
+    return funnel, fails
+
+
+def _typed(d, type_col, sigma_col, ok_col):
+    """Rows with a usable type and a finite statistic."""
+    for c in (type_col, sigma_col):
+        if c not in d:
+            raise KeyError(f'no {c!r} column; columns are {list(d.columns)[:12]}...')
+    d = _ok(d, ok_col)
+    return d[d[type_col].notna() & np.isfinite(d[sigma_col])]
+
+
+def zmad_type_hist(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
+                   cut=10.0, log=True, groups=None, colors=None,
+                   outline=('Type 1 (Sy1-1.2)',), bins=20, figsize=(7, 5),
+                   ax=None, save=None, dpi=150):
+    """Sigma distribution by coarse AGN type, with an optional cut line.
+
+    Fine classes are collapsed into `groups` (default: Type 1 / Sy1.5 / Type 2),
+    so the panel carries three histograms rather than one per subclass.  Groups
+    named in `outline` are drawn as dashed steps instead of filled.
+
+    Any class label not listed in `groups` is dropped and reported -- worth
+    reading, since BASS spellings vary ('Sy1' vs 'Sy1.0').
+    """
+    sigma_col = sigma_col or f'{prefix}sigma'
+    ok_col = ok_col or f'{prefix}ok'
+    groups = groups or TYPE_GROUPS
+    colors = {**GROUP_COLOR, **(colors or {})}
+    d_in = d
+    d = _typed(d, type_col, sigma_col, ok_col)
+
+    lut = {t: g for g, members in groups.items() for t in members}
+    d = d.assign(_grp=d[type_col].map(lut))
+    lost = d.loc[d['_grp'].isna(), type_col].value_counts()
+    d = d[d['_grp'].notna()]
+    if d.empty:
+        raise ValueError(f'no rows matched {list(groups)}; labels present: '
+                         f'{list(lost.index)[:10]}')
+
+    v = d[sigma_col]
+    if log:
+        n_bad = int((v <= 0).sum())
+        # d = d[v > 0]
+        d = d.assign(_x=np.log10(np.abs(d[sigma_col])))
+        xlabel = f'log {sigma_col}'
+    else:
+        n_bad, xlabel = 0, sigma_col
+        d = d.assign(_x=d[sigma_col])
+
+    edges = np.histogram_bin_edges(d['_x'], bins=bins)
+    fig = ax.figure if ax is not None else plt.figure(figsize=figsize)
+    ax = ax or fig.add_subplot(111)
+
+    for g in groups:
+        xs = d.loc[d['_grp'] == g, '_x']
+        if xs.empty:
+            continue
+        if g in outline:
+            ax.hist(xs, bins=edges, histtype='step', linestyle='--',
+                    color=colors.get(g, 'black'), lw=1.6, label=f'{g}  n={len(xs)}')
+        else:
+            ax.hist(xs, bins=edges, color=colors.get(g), alpha=0.65,
+                    edgecolor='black', lw=0.4, label=f'{g}  n={len(xs)}')
+
+    if cut:
+        ax.axvline(np.log10(cut) if log else cut, color='black',
+                   linestyle='--', lw=2.5)
+        n = int((d[sigma_col] > cut).sum())
+        ax.set_title(f'{sigma_col} > {cut:g}: {n}/{len(d)} '
+                     f'({100*n/len(d):.0f}%)', fontsize=10)
+
+    ax.set_xlabel(xlabel, fontsize=12)
+    ax.set_ylabel('#sources', fontsize=12)
+    funnel, fails = zmad_census(d_in, type_col=type_col, sigma_col=sigma_col,
+                                ok_col=ok_col, groups=groups, log=log, verbose=False)
+    n_in, n_plot = int(funnel.iloc[0]), int(funnel.iloc[-1])
+    notes = [f'{n_plot} of {n_in} rows plotted']
+    for k, v in (-funnel.diff().dropna()).items():
+        if v:
+            notes.append(f'  -{int(v)} failed: {k}')
+    if len(lost):
+        notes.append('unmatched labels: ' + ', '.join(
+            f'{k} x{v}' for k, v in lost.items()))
+    ax.annotate('\n'.join(notes), (0.02, 0.02), xycoords='axes fraction',
+                fontsize=7.5, color='firebrick', va='bottom')
+    print('\n'.join(notes))
+    if len(fails):
+        print('reasons for not-ok rows:\n' + fails.to_string())
+    ax.legend(fontsize=9, loc='upper left')
+    _save(fig, save, dpi)
+    return fig, ax
+
+
+def zmad_type_fraction(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
+                       cut=10.0, groups=None, mode='composition', colors=None,
+                       figsize=(7, 5), ax=None, save=None, dpi=150):
+    """Type make-up of the sources passing the cut, stacked by fine type.
+
+    mode='composition' : each bar is a share of the above-cut sample; bars sum
+                         to 100%.  This is the published figure.
+    mode='rate'        : each bar is the fraction of that group's own sources
+                         that pass the cut.  Bars do not sum to 100% and this
+                         is the quantity that actually says which types vary.
+    """
+    sigma_col = sigma_col or f'{prefix}sigma'
+    ok_col = ok_col or f'{prefix}ok'
+    colors = {**TYPE_COLOR, **(colors or {})}
+    groups = groups or TYPE_GROUPS
+    d = _typed(d, type_col, sigma_col, ok_col)
+    above = d[d[sigma_col] > cut]
+
+    fig = ax.figure if ax is not None else plt.figure(figsize=figsize)
+    ax = ax or fig.add_subplot(111)
+
+    for i, (label, members) in enumerate(groups.items()):
+        denom = len(above) if mode == 'composition' else \
+            len(d[d[type_col].isin(members)])
+        bottom = 0.0
+        for t in members:
+            n = int((above[type_col] == t).sum())
+            if not n or not denom:
+                continue
+            h = 100.0 * n / denom
+            ax.bar(i, h, bottom=bottom, width=0.72, color=colors.get(t),
+                   edgecolor='black', linestyle='--' if t == 'Sy1' else '-',
+                   hatch=TYPE_HATCH.get(t, ''), label=t if i == 0 or t not in
+                   [m for g in list(groups.values())[:i] for m in g] else None)
+            bottom += h
+        if mode == 'rate' and denom:
+            ax.annotate(f'n={denom}', (i, bottom), ha='center', va='bottom',
+                        fontsize=8, color='dimgray')
+
+    ax.set_xticks(range(len(groups)))
+    ax.set_xticklabels(groups.keys())
+    ax.set_ylabel('Fraction of sources', fontsize=12)
+    ax.yaxis.set_major_formatter(lambda y, _: f'{y:.0f}%')
+    ax.set_title(f'{sigma_col} > {cut:g}  ({len(above)} sources, mode={mode})',
+                 fontsize=10)
+    ax.legend(title='Type', fontsize=9, ncol=2)
+    _save(fig, save, dpi)
+    return fig, ax
+
+
+# ---------------------------------------------------------------------- CLI
+
+
+def _main():
+    import argparse
+    import os
+
+    import pandas as pd
+
+    p = argparse.ArgumentParser(
+        description='Plot ZMAD results. Population panels need only the parquet; '
+                    'per-source figures re-run zmad_metric on the chosen files.')
+    p.add_argument('parquet', help='output of run_zmad.py')
+    p.add_argument('--aperture', default=None)
+    p.add_argument('--summary', metavar='PNG', help='write the population figure here')
+    p.add_argument('--top', type=int, metavar='N',
+                   help='also re-run the N highest-sigma sources and plot each')
+    p.add_argument('--outdir', default='.', help='where --top figures go')
+    p.add_argument('--sigma-cut', type=float, default=3.0)
+    p.add_argument('--dpi', type=int, default=110)
+    args = p.parse_args()
+
+    plt.switch_backend('Agg')
+    d = pd.read_parquet(os.path.expanduser(args.parquet))
+
+    fig, _ = zmad_summary(d, aperture=args.aperture, sigma_cut=args.sigma_cut)
+    dest = os.path.expanduser(args.summary or 'zmad_summary.png')
+    os.makedirs(os.path.dirname(os.path.abspath(dest)), exist_ok=True)
+    fig.savefig(dest, dpi=args.dpi, bbox_inches='tight')
+    plt.close(fig)
+    print(f'wrote {dest}')
+
+    if not args.top:
+        return
+
+    from ZMAD import BAT_ROOT, zmad_metric
+    outdir = os.path.expanduser(args.outdir)
+    os.makedirs(outdir, exist_ok=True)
+
+    sel = _ok(d, 'ok').sort_values('sigma', ascending=False)
+    for f in sel['file'].drop_duplicates().head(args.top):
+        path = os.path.join(BAT_ROOT, f)
+        agn, stars, out = zmad_metric(path, verbose=False)
+        if out is None:
+            print(f'{f}: no result on re-run')
+            continue
+        for tag, m in out['metrics'].items():
+            if m is not None:
+                print('wrote', save_all(agn, stars, out, tag=tag,
+                                        outdir=outdir, dpi=args.dpi))
+
+
+if __name__ == '__main__':
+    _main()

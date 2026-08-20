@@ -148,7 +148,7 @@ def apply_mag_mask(pool, ztf, mag_column, margin=0.0):
     return mask[mask].index
 
 
-def apply_coverage(pool, ztf,verbose=False):
+def apply_coverage(pool, ztf, min_pct=90, verbose=False):
     ztf_mjd_set        = set(ztf['OBSMJD'].values)
     covered            = pool.sort_values('OBSMJD').copy()
     covered['covered'] = covered['OBSMJD'].isin(ztf_mjd_set)
@@ -157,7 +157,7 @@ def apply_coverage(pool, ztf,verbose=False):
     cov['coverage_pct'] *= 100
     if verbose:
         print(cov.describe())
-    return cov[cov['coverage_pct'] >= 90].index
+    return cov[cov['coverage_pct'] >= min_pct].index
 
 
 def apply_class_star(pool, ztf, class_win=0.3):
@@ -304,75 +304,124 @@ def quality_flags(df, ztf):
 
     return cs1
 
-def quality_cuts(cs1, ztf, mag_column, x=10,class_win=0.1, mag_margin=0.0):
-    # ── step 1: exclude target rows ───────────────────────────────────────────
+# def quality_cuts(cs1, ztf, mag_column, x=10,class_win=0.1, mag_margin=0.0):
+#     # ── step 1: exclude target rows ───────────────────────────────────────────
+#     cs_all = cs1[
+#         (~cs1['ALPHAWIN_REF'].isin(ztf['ALPHAWIN_REF'])) &
+#         (~cs1['DELTAWIN_REF'].isin(ztf['DELTAWIN_REF']))
+#     ]
+
+#     if cs_all.empty:
+#         print('quality cuts left 0 cs')
+#         return pd.DataFrame(), pd.DataFrame()
+
+#     # # ── steps 3–5: mag range → coverage → CLASS_STAR_OBJ ─────────────────────
+#     # cs = cs_all[cs_all['object_index'].isin(apply_mag_mask(cs_all, ztf, mag_column))]
+#     # print('mag filter', len(cs))
+#     # cs = cs[cs['object_index'].isin(apply_coverage(cs, ztf))]
+#     # print('coverage check', len(cs))
+#     # cs = cs[cs['object_index'].isin(apply_class_star(cs, ztf, x))]
+#     # print('CLASS_OBJ_ID selection',len(cs))
+
+#     # n = cs['object_index'].nunique()
+#     # print(f'{n} cs after mag, coverage and CLASS_STAR_OBJ filters: {len(cs)} epochs')
+
+#     # # ── step 6: top up if n < x ───────────────────────────────────────────────
+#     # if n < x:
+#     #     n_extra      = x - n
+#     #     cs_remaining = cs_all[~cs_all['object_index'].isin(cs['object_index'].unique())]
+
+#     #     if not cs_remaining.empty:
+#     #         cs_extra = cs_remaining[cs_remaining['object_index'].isin(
+#     #             apply_mag_proximity(cs_remaining, ztf, mag_column, n_extra))]
+#     #         cs_extra = cs_extra[cs_extra['object_index'].isin(
+#     #             apply_coverage(cs_extra, ztf))]
+#     #         cs_extra = cs_extra[cs_extra['object_index'].isin(
+#     #             apply_class_star(cs_extra, ztf, n_extra))]
+
+#     #         if not cs_extra.empty:
+#     #             cs = pd.concat([cs, cs_extra], ignore_index=True)
+#     #             print(f'added {cs_extra["object_index"].nunique()} extra stars '
+#     #                   f'by median mag proximity (n was {n})')
+#     #         else:
+#     #             print(f'no extra stars found after filters (n stays {n})')
+#     # coverage: hard cut, NEVER relaxed (biases the noise floor otherwise)
+
+#     cov_ok = cs_all[cs_all['object_index'].isin(apply_coverage(cs_all, ztf))]
+#     print('coverage check', cov_ok['object_index'].nunique())
+
+#     # relax class window first, then mag margin, until x stars survive
+#     cs, n, cw = pd.DataFrame(), 0, class_win
+#     for cw, mm in [(class_win,   mag_margin),
+#                    (2*class_win, mag_margin),
+#                    (2*class_win, mag_margin + 0.1),
+#                    (4*class_win, mag_margin + 0.1),
+#                    (6*class_win, mag_margin + 0.1),
+#                    (9*class_win, mag_margin + 0.1),
+#                    (np.inf,      mag_margin + 0.2)]:
+#                 #    (np.inf,      mag_margin + 0.2)]:
+#         gated = cov_ok[cov_ok['object_index'].isin(
+#             apply_mag_mask(cov_ok, ztf, mag_column, mm))]
+#         gated = gated[gated['object_index'].isin(
+#             apply_class_star(gated, ztf, cw))]
+#         # rank survivors by |Δmag|, take the x nearest — magnitude is the ONLY ranker
+#         cs = gated[gated['object_index'].isin(
+#             apply_mag_proximity(gated, ztf, mag_column, x))]
+#         n = cs['object_index'].nunique()
+#         if n >= x:
+#             break
+
+#     print(f'{n} cs after coverage + class(±{cw}) + mag(±{mm}) gates: {len(cs)} epochs')
+
+#     return cs
+def quality_cuts(cs1, ztf, mag_column, x=10, min_cov=90,
+                 class_ladder=(0.2, 0.3, 0.5, np.inf),
+                 magcap_ladder=(0.1, 0.2, 0.3, 0.5)):
     cs_all = cs1[
         (~cs1['ALPHAWIN_REF'].isin(ztf['ALPHAWIN_REF'])) &
         (~cs1['DELTAWIN_REF'].isin(ztf['DELTAWIN_REF']))
     ]
-
     if cs_all.empty:
         print('quality cuts left 0 cs')
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
 
-    # # ── steps 3–5: mag range → coverage → CLASS_STAR_OBJ ─────────────────────
-    # cs = cs_all[cs_all['object_index'].isin(apply_mag_mask(cs_all, ztf, mag_column))]
-    # print('mag filter', len(cs))
-    # cs = cs[cs['object_index'].isin(apply_coverage(cs, ztf))]
-    # print('coverage check', len(cs))
-    # cs = cs[cs['object_index'].isin(apply_class_star(cs, ztf, x))]
-    # print('CLASS_OBJ_ID selection',len(cs))
+    # precompute per-object distances ONCE
+    target_med   = ztf[mag_column].median()
+    target_class = ztf['CLASS_STAR_OBJ'].mode().iloc[0]
+    #median mag ranking distribution
+    mag_dist   = (cs_all.groupby('object_index')[mag_column].median() - target_med).abs() 
+    #class_star_obj ranking distribution
+    class_dist = (cs_all.groupby('object_index')['CLASS_STAR_OBJ'].first() - target_class).abs()
 
-    # n = cs['object_index'].nunique()
-    # print(f'{n} cs after mag, coverage and CLASS_STAR_OBJ filters: {len(cs)} epochs')
+    ztf_mjd = set(ztf['OBSMJD'].values)
+    tmp = cs_all[['object_index', 'OBSMJD']].copy()
+    tmp['covered'] = tmp['OBSMJD'].isin(ztf_mjd)
+    star_cov = tmp.groupby('object_index')['covered'].mean() * 100
 
-    # # ── step 6: top up if n < x ───────────────────────────────────────────────
-    # if n < x:
-    #     n_extra      = x - n
-    #     cs_remaining = cs_all[~cs_all['object_index'].isin(cs['object_index'].unique())]
+    # coverage: HARD gate, never relaxed — biases the noise floor otherwise
+    in_cov = star_cov[star_cov >= min_cov].index
 
-    #     if not cs_remaining.empty:
-    #         cs_extra = cs_remaining[cs_remaining['object_index'].isin(
-    #             apply_mag_proximity(cs_remaining, ztf, mag_column, n_extra))]
-    #         cs_extra = cs_extra[cs_extra['object_index'].isin(
-    #             apply_coverage(cs_extra, ztf))]
-    #         cs_extra = cs_extra[cs_extra['object_index'].isin(
-    #             apply_class_star(cs_extra, ztf, n_extra))]
+    chosen, fired = pd.Index([]), None
+    # loosen class innermost (first), mag cap outermost (last)
+    for cap in magcap_ladder:
+        in_mag = mag_dist[mag_dist <= cap].index
+        for cw in class_ladder:
+            in_cls = class_dist[class_dist <= cw].index
+            cand = in_mag.intersection(in_cov).intersection(in_cls)
+            # rank survivors by |Δmag|, take the x closest — magnitude is the only ranker
+            chosen = mag_dist.loc[cand].sort_values().head(x).index
+            fired = (cw, cap)
+            if len(chosen) >= x:
+                break
+        else:
+            continue
+        break
 
-    #         if not cs_extra.empty:
-    #             cs = pd.concat([cs, cs_extra], ignore_index=True)
-    #             print(f'added {cs_extra["object_index"].nunique()} extra stars '
-    #                   f'by median mag proximity (n was {n})')
-    #         else:
-    #             print(f'no extra stars found after filters (n stays {n})')
-    # coverage: hard cut, NEVER relaxed (biases the noise floor otherwise)
-
-    cov_ok = cs_all[cs_all['object_index'].isin(apply_coverage(cs_all, ztf))]
-    print('coverage check', cov_ok['object_index'].nunique())
-
-    # relax class window first, then mag margin, until x stars survive
-    cs, n, cw = pd.DataFrame(), 0, class_win
-    for cw, mm in [(class_win,   mag_margin),
-                   (2*class_win, mag_margin),
-                   (2*class_win, mag_margin + 0.1),
-                   (4*class_win, mag_margin + 0.1),
-                   (6*class_win, mag_margin + 0.1),
-                   (9*class_win, mag_margin + 0.1),
-                   (np.inf,      mag_margin + 0.2)]:
-                #    (np.inf,      mag_margin + 0.2)]:
-        gated = cov_ok[cov_ok['object_index'].isin(
-            apply_mag_mask(cov_ok, ztf, mag_column, mm))]
-        gated = gated[gated['object_index'].isin(
-            apply_class_star(gated, ztf, cw))]
-        # rank survivors by |Δmag|, take the x nearest — magnitude is the ONLY ranker
-        cs = gated[gated['object_index'].isin(
-            apply_mag_proximity(gated, ztf, mag_column, x))]
-        n = cs['object_index'].nunique()
-        if n >= x:
-            break
-
-    print(f'{n} cs after coverage + class(±{cw}) + mag(±{mm}) gates: {len(cs)} epochs')
-
+    cs = cs_all[cs_all['object_index'].isin(chosen)]
+    n = cs['object_index'].nunique()
+    cw, cap = fired
+    tag = 'OK' if n >= x else f'SHORT({n}/{x})'
+    print(f'{tag}: {n} cs | class<={cw} cov>={min_cov} magcap<={cap} | {len(cs)} epochs')
     return cs
 
 # # ── 3. optional sigma filtering of calstars ───────────────────────────────────
@@ -511,11 +560,13 @@ def compute_calstar_sf(cs, mag_column, mag_err, log_bins):
 
     # pass 2: err_prop on raw |dmag| per bin
     g_dmag_bin = df_cs.groupby('log_bin', observed=True)['dmag']
+    n_cs_bin   = g_dmag_bin.count()
+    sqrt_n_cs  = np.sqrt(n_cs_bin.clip(lower=1))
     dp16 = g_dmag_bin.quantile(0.16)
     dp50 = g_dmag_bin.quantile(0.50)
     dp84 = g_dmag_bin.quantile(0.84)
-    minerr_cs = (dp50 - dp16).dropna()
-    maxerr_cs = (dp84 - dp50).dropna()
+    minerr_cs = ((dp50 - dp16)/ sqrt_n_cs).dropna()
+    maxerr_cs = ((dp84 - dp50)/ sqrt_n_cs).dropna()
 
     return df_cs, grouped_cs, mean_sq, avg_sq_dmag_cs, binminerr_cs, binmaxerr_cs, minerr_cs, maxerr_cs
 
@@ -671,7 +722,7 @@ def optSF(file, calstars=True, weight=False,
           clip=False, showallcs=False, plot=False, save_plt=False, save=False,
           x=10, gap_threshold=90, mag_column='MAG_4_TOT_AB', mag_err='MERR_4_TOT_AB',
           logbin_min=np.log10(0.5), logbin_max=np.log10(2500),
-          sigma_filter=False):
+          sigma_filter=False,plot_sigma=False):
     """
     Structure function pipeline.
 
@@ -716,7 +767,7 @@ def optSF(file, calstars=True, weight=False,
     # ztf1 = df[df['object_index'] == obj_id]
     ztf1 = df[df['object_index'] == tgt_obj_idx]
 
-    mask = ztf1[mag_err] < 0.5
+    mask = (ztf1[mag_err] < 0.5) & (ztf1['MAGLIM'] > 20.5) & (ztf1['SEEING'] < 3)
 
     if 'qid' in ztf1.columns:
         qid    = ztf1['qid'].mode().iloc[0]
@@ -768,18 +819,21 @@ def optSF(file, calstars=True, weight=False,
             print('empty cs')
             return None
 
+        # cs_id = cs1.object_index.unique()
         # optional sigma filtering of calstar pool
         if sigma_filter and not cs1.empty:
             # cs = filter_calstars_sigma(cs1, mag_column, file=file)
-            cs = run_sigma_filtering(cs1.rename(columns={mag_column: 'MAG_4_TOT_AB'}),
+            cs, sdiag = run_sigma_filtering(cs1,
                                     agn_indices = tgt_obj_idx,
-                                    save_file=True, 
+                                    save_file=False, 
                                     plot=False,
-                                    save_plt=True,
+                                    save_plt=plot_sigma,
                                     filename=file,
-                                    # cs_list=None,
+                                    # cs_list=cs_id,
                                     ra=ra,
                                     dec=dec)
+        else:
+            sdiag = None
 
         cs = quality_cuts(cs, ztf,mag_column,x=x)
         # print(f"selected calib stars: {cs['object_index'].unique()}")
@@ -788,6 +842,12 @@ def optSF(file, calstars=True, weight=False,
             # print(f"Objects before clipping: {cs['object_index'].unique()}")
             cs = clip_by_blocks(cs, mag_column, gap_threshold)
             # print(f"calib stars after clipping: {cs['object_index'].unique()}")
+
+        if (sdiag is not None) and (plot_sigma):
+            plot_sigma_locus(sdiag.agg_df, sdiag.cx, sdiag.my, sdiag.sigma,
+                            tgt_obj_idx=sdiag.tgt_obj_idx,
+                            highlight=cs['object_index'].unique().tolist(),
+                            save_plot=save_plt, filename=file, ra=ra, dec=dec)
 
     else:
         cs1 = pd.DataFrame()
@@ -901,7 +961,8 @@ def optSF(file, calstars=True, weight=False,
     return SF_dict
 
 def SF_wnoise(mag_col, time_col, mag_err, cs_all=None, clip=False, weight=False,
-              color='red', showallcs=False, plot=False,path=None, save_plt=False, save=False,
+              color='red', showallcs=False, plot=False,path=None, save_plt=False,
+              out_name= 'SF', save=False,
               logbin_min=np.log10(0.5), logbin_max=np.log10(2500),verbose=False):
     """Structure function for simulated / array-input light curves.
 
@@ -935,6 +996,8 @@ def SF_wnoise(mag_col, time_col, mag_err, cs_all=None, clip=False, weight=False,
         'OBSMJD':    time_col       # rename to OBSMJD so shared modules work
     })
 
+    # ztf1 = ztf1[ztf1[mag_err] < 0.5]
+
     mztf   = ztf1[mag_column].median()
     minztf = ztf1[mag_column].min()
     maxztf = ztf1[mag_column].max()
@@ -949,12 +1012,15 @@ def SF_wnoise(mag_col, time_col, mag_err, cs_all=None, clip=False, weight=False,
     cs  = pd.DataFrame()
     n   = 0
 
+
+
     if cs_all is not None and not cs_all.empty:
 
-        # filter by band and CCD
-        cs1 = cs_all[
-            cs_all['CCDquadID'] == ztf['CCDquadID'].mode()[0]
-        ].reset_index(drop=True)
+
+        if 'CCDquadID' in cs_all.columns and 'CCDquadID' in ztf.columns:
+            cs1 = cs_all[cs_all['CCDquadID'] == ztf['CCDquadID'].mode()[0]].reset_index(drop=True)
+        else:
+            cs1 = cs_all.reset_index(drop=True)
 
         # flux → mag conversion if needed
         if not cs1.empty and mag_column not in cs1.columns:
@@ -963,7 +1029,7 @@ def SF_wnoise(mag_col, time_col, mag_err, cs_all=None, clip=False, weight=False,
             cs1[mag_column] = -2.5 * np.log10(cs1[flux_col].values * 1e-6) + 8.90
             cs1[err_column]  = 2.5 / np.log(10) * (cs1[fxunc].values / cs1[flux_col].values)
             cs1.dropna(subset=[mag_column], inplace=True)
-
+        
         if cs1.empty:
             if verbose:
                 print('band/CCD filter left 0 cs')
@@ -1134,8 +1200,10 @@ def SF_wnoise(mag_col, time_col, mag_err, cs_all=None, clip=False, weight=False,
         plt.tight_layout()
 
         if save_plt:
-            plt.savefig(path + 'simulated_SF.png')
-            print(f"Plot saved to {path} as simulated_SF.png")
+            # plt.savefig(path + 'simulated_SF.png')
+            # print(f"Plot saved to {path} as simulated_SF.png")
+            plt.savefig(path + f"{out_name}.png")
+            print(f"Plot saved to {path} as {out_name}.png")
 
         if plot:
             plt.show()
@@ -1146,7 +1214,11 @@ def SF_wnoise(mag_col, time_col, mag_err, cs_all=None, clip=False, weight=False,
     SF_dict = [{'SF': SF, 'SFmaxerr': maxerr_sf, 'SFminerr': minerr_sf}]
 
     if save:
-        name_file = path + 'simulated_SF.pkl'
+        # name_file = path + 'simulated_SF.pkl'
+        # with open(name_file, 'wb') as f:
+        #     pickle.dump(SF_dict, f)
+        # print(f'pkl file successfully saved in {name_file}\n')
+        name_file = path + f"{out_name}.pkl"
         with open(name_file, 'wb') as f:
             pickle.dump(SF_dict, f)
         print(f'pkl file successfully saved in {name_file}\n')
@@ -1342,15 +1414,15 @@ def SF_linmix(old_dict, verbose=False, amp_at=365,
     yerr   = sf_err    / (sf_mag  * np.log(10))
  
     # ── photometry key ────────────────────────────────────────────────────────
-    if phot:
-        mag_key = list(old_dict.keys())[5]
-        if mag_key.endswith('_mag'):
-            phot = mag_key.split('_')[0]
-        else:
-            print('photometry is not defined')
-            return
-    else:
-        phot = ''
+    # if phot:
+    #     mag_key = list(old_dict.keys())[5]
+    #     if mag_key.endswith('_mag'):
+    #         phot = mag_key.split('_')[0]
+    #     else:
+    #         print('photometry is not defined')
+    #         return
+    # else:
+    #     phot = ''
  
     # ── data quality checks ───────────────────────────────────────────────────
     checks = {
@@ -1402,7 +1474,8 @@ def SF_linmix(old_dict, verbose=False, amp_at=365,
     alpha_p16, alpha_med, alpha_p84 = np.percentile(chain_alpha, [16, 50, 84])
     beta_p16,  beta_med,  beta_p84  = np.percentile(chain_beta,  [16, 50, 84])
  
-    A_at_1        = 10 ** alpha_med
+    # A_at_1        = 10 ** alpha_med
+    A_1_p16, A_at_1, A_1_p84 = 10 ** np.percentile(chain_alpha, [16, 50, 84])
     # A_ref_samples = 10 ** chain_alpha * amp_at ** chain_beta
     # A_ref_p16, A_ref_med, A_ref_p84 = np.percentile(A_ref_samples, [16, 50, 84])
     log_A_ref = chain_alpha + chain_beta * np.log10(amp_at)
@@ -1411,9 +1484,11 @@ def SF_linmix(old_dict, verbose=False, amp_at=365,
     # ── update dict ───────────────────────────────────────────────────────────
     old_dict.update({
         f'A_1_spl':              A_at_1,
+        f'A_1_maxerr_spl':  A_1_p84 - A_at_1,
+        f'A_1_minerr_spl':  A_at_1  - A_1_p16,
         f'A_{amp_at}_spl':   A_ref_med,
-        f'A_maxerr_spl':     A_ref_p84  - A_ref_med,
-        f'A_minerr_spl':     A_ref_med  - A_ref_p16,
+        f'A_{amp_at}_maxerr_spl':     A_ref_p84  - A_ref_med,
+        f'A_{amp_at}_minerr_spl':     A_ref_med  - A_ref_p16,
         f'gamma_spl':        beta_med,
         f'gamma_maxerr_spl': beta_p84   - beta_med,
         f'gamma_minerr_spl': beta_med   - beta_p16,
@@ -1469,20 +1544,26 @@ def broken_power_law_flat(dt, A, gamma1, dt_break):
 def broken_power_law_at_break(dt, A_break, gamma1, dt_break):
     return np.where(dt <= dt_break, A_break * (dt / dt_break) ** gamma1, A_break)
 
+# registry: string label -> model function (used by bpl_mcmc / drivers / plotter)
+BPL_MODELS = {
+    'flat':     broken_power_law_flat,
+    'at_break': broken_power_law_at_break,
+}
+
 # 2. Define log-likelihood (Gaussian)
-def log_likelihood(theta, dt, sf, sf_err):
-    """Gaussian log-likelihood"""
+def log_likelihood(theta, dt, sf, sf_err, model=broken_power_law_flat):
+    """Gaussian log-likelihood for the chosen broken-power-law model."""
     A, gamma1, dt_break = theta
-    
+
     # Model prediction
-    model = broken_power_law_flat(dt, A, gamma1, dt_break)
-    
+    pred = model(dt, A, gamma1, dt_break)
+
     # Chi-squared term
-    chi2 = np.sum(((sf - model) / sf_err) ** 2)
-    
+    chi2 = np.sum(((sf - pred) / sf_err) ** 2)
+
     # Normalization term
     norm = np.sum(np.log(2 * np.pi * sf_err ** 2))
-    
+
     return -0.5 * (chi2 + norm)
 
 # 3. Define log-prior (physically motivated)
@@ -1503,22 +1584,26 @@ def log_prior(theta, dt):
     return -np.log(A)  # log of 1/A prior
 
 # 4. Define log-posterior
-def log_posterior(theta, dt, sf, sf_err):
+def log_posterior(theta, dt, sf, sf_err, model=broken_power_law_flat):
     """Log-posterior probability"""
     lp = log_prior(theta, dt)
     if not np.isfinite(lp):
         return -np.inf
-    return lp + log_likelihood(theta, dt, sf, sf_err)
+    return lp + log_likelihood(theta, dt, sf, sf_err, model)
 
 def bpl_mcmc(old_dict, initial_guess=[0.5, 0.5, 100], model_check=False,
              mcmc_check=False, plot=False, save_plot=False, path=None,
-             progress=True, verbose=False):
+             progress=True, verbose=False, model='flat'):
     # initial_guess = [A, gamma, dt_break]
     # model check: plot model and data. checks the fit is right
     _p = print if verbose else (lambda *a, **k: None)
 
+    if model not in BPL_MODELS:
+        raise ValueError(f"model must be one of {list(BPL_MODELS)}, got {model!r}")
+    model_func = BPL_MODELS[model]
+
     interval_index = pd.IntervalIndex(old_dict['SF'].index)
-    sf_mag = old_dict['SF'][(interval_index.left >= 1) & (interval_index.left <= 365) & (old_dict['SF'] != 0)].dropna()
+    sf_mag = old_dict['SF'][(interval_index.left >= 1) & (interval_index.right <= 365) & (old_dict['SF'] != 0)].dropna()
     dt = sf_mag.index.categories[sf_mag.index.codes].mid
     dt_lenbin = sf_mag.index.categories[sf_mag.index.codes].length / 2
     maxerr_sf2 = old_dict['SFmaxerr'][old_dict['SFmaxerr'].index.isin(sf_mag.index)]
@@ -1532,7 +1617,7 @@ def bpl_mcmc(old_dict, initial_guess=[0.5, 0.5, 100], model_check=False,
 
     # 5. starting values from an error-weighted curve_fit
     try:
-        popt, pcov = curve_fit(broken_power_law_flat, dt, sf_mag,
+        popt, pcov = curve_fit(model_func, dt, sf_mag,
                                p0=initial_guess, sigma=err, absolute_sigma=True)
         A_guess, gamma_guess, dt_break_guess = popt
     except Exception:
@@ -1542,7 +1627,7 @@ def bpl_mcmc(old_dict, initial_guess=[0.5, 0.5, 100], model_check=False,
     _p(f"Initial guesses: A={A_guess:.3f}, gamma={gamma_guess:.3f}, dt_break={dt_break_guess:.1f}")
 
     if model_check:
-        y_broken_pl = broken_power_law_flat(dt, A_guess, gamma_guess, dt_break_guess)
+        y_broken_pl = model_func(dt, A_guess, gamma_guess, dt_break_guess)
         plt.errorbar(dt, sf_mag, yerr=err, fmt='o', capsize=5, label='Data')
         plt.plot(dt, y_broken_pl, label='broken power law')
         plt.axvline(dt_break_guess, color='black', linestyle=':')
@@ -1582,14 +1667,14 @@ def bpl_mcmc(old_dict, initial_guess=[0.5, 0.5, 100], model_check=False,
             return None
 
     # 7. run MCMC
-    sampler = emcee.EnsembleSampler(nwalkers, ndim, log_posterior, args=(dt, sf_mag, err))
+    sampler = emcee.EnsembleSampler(nwalkers, ndim, log_posterior, args=(dt, sf_mag, err, model_func))
     _p("Running MCMC...")
     sampler.run_mcmc(pos, nsteps, progress=progress)
 
     # 8. analyse
     samples = sampler.get_chain(discard=burnin, flat=True)
     A_mcmc, gamma_mcmc, dt_break_mcmc = np.median(samples, axis=0)
-    A_err = np.percentile(samples[:, 0], [16, 84])
+    # A_err = np.percentile(samples[:, 0], [16, 84])
     gamma_err = np.percentile(samples[:, 1], [16, 84])
     dt_break_err = np.percentile(samples[:, 2], [16, 84])
 
@@ -1597,27 +1682,37 @@ def bpl_mcmc(old_dict, initial_guess=[0.5, 0.5, 100], model_check=False,
     # i.e. the saturation SF (comparable to the DRW SF_inf). Computed PER
     # SAMPLE so the (A, gamma, dt_break) correlations propagate correctly —
     # same pattern as SF_linmix's A_ref_samples.
-    plateau_samples = samples[:, 0] * samples[:, 2] ** samples[:, 1]
-    pl_p16, pl_med, pl_p84 = np.percentile(plateau_samples, [16, 50, 84])
+
+    if model == 'at_break':
+        A_break_samples = samples[:, 0]
+        A_1_samples     = samples[:, 0] * samples[:, 2] ** (-samples[:, 1])   # A_break · dt_break^(−γ)
+    else:  # 'flat': samples[:,0] is A_1
+        A_1_samples     = samples[:, 0]
+        A_break_samples = samples[:, 0] * samples[:, 2] ** samples[:, 1]      # A_1 · dt_break^(+γ)
+
+    A1_p16, A1_med, A1_p84 = np.percentile(A_1_samples,     [16, 50, 84])
+    Ab_p16, Ab_med, Ab_p84 = np.percentile(A_break_samples, [16, 50, 84])   
 
     _p("\nMCMC Results:")
-    _p(f"A = {A_mcmc:.3f} +{A_err[1]-A_mcmc:.3f} -{A_mcmc-A_err[0]:.3f}")
-    _p(f"A_break = {pl_med:.3f} +{pl_p84-pl_med:.3f} -{pl_med-pl_p16:.3f}")
+    _p(f"A = {A1_med:.3f} +{A1_p84 - A1_med:.3f} -{A1_med - A1_p16:.3f}")
+    _p(f"A_break = {Ab_med:.3f} +{Ab_p84 - Ab_med:.3f} -{Ab_med - Ab_p16:.3f}")
     _p(f"gamma = {gamma_mcmc:.3f} +{gamma_err[1]-gamma_mcmc:.3f} -{gamma_mcmc-gamma_err[0]:.3f}")
     _p(f"dt_break = {dt_break_mcmc:.1f} +{dt_break_err[1]-dt_break_mcmc:.1f} -{dt_break_mcmc-dt_break_err[0]:.1f}")
 
-    SF_dict = {'RA': old_dict['RA'], 'A_1_bpl': A_mcmc, 
-               'A_maxerr_bpl': A_err[1]-A_mcmc, 
-               'A_minerr_bpl': A_mcmc-A_err[0],
-               'A_break_bpl': pl_med,
-               'A_break_maxerr_bpl': pl_p84 - pl_med,
-               'A_break_minerr_bpl': pl_med - pl_p16,
-               'gamma_bpl': gamma_mcmc, 
-               'gamma_maxerr_bpl': gamma_err[1]-gamma_mcmc,
-               'gamma_minerr_bpl': gamma_mcmc-gamma_err[0],
-               'dt_break_bpl': dt_break_mcmc, 
-               'dt_break_maxerr_bpl': dt_break_err[1]-dt_break_mcmc,
-               'dt_break_minerr_bpl': dt_break_mcmc-dt_break_err[0]}
+    SF_dict = {'RA': old_dict['RA'], 'A_1_bpl': A1_med, 
+            'A_1_maxerr_bpl': A1_p84 - A1_med, 
+            'A_1_minerr_bpl': A1_med - A1_p16,
+            'A_break_bpl': Ab_med,
+            'A_break_maxerr_bpl': Ab_p84 - Ab_med,
+            'A_break_minerr_bpl': Ab_med - Ab_p16,
+            'gamma_bpl': gamma_mcmc, 
+            'gamma_maxerr_bpl': gamma_err[1]-gamma_mcmc,
+            'gamma_minerr_bpl': gamma_mcmc-gamma_err[0],
+            'dt_break_bpl': dt_break_mcmc, 
+            'dt_break_maxerr_bpl': dt_break_err[1]-dt_break_mcmc,
+            'dt_break_minerr_bpl': dt_break_mcmc-dt_break_err[0]}
+   
+        
 
     if mcmc_check:
         # 9. trace plots
@@ -1636,7 +1731,7 @@ def bpl_mcmc(old_dict, initial_guess=[0.5, 0.5, 100], model_check=False,
     if plot or save_plot:
         # 11. best fit with data + posterior draws
         dt_fit = np.logspace(np.log10(min(dt)), np.log10(max(dt)), 100)
-        y_fit = broken_power_law_flat(dt_fit, A_mcmc, gamma_mcmc, dt_break_mcmc)
+        y_fit = model_func(dt_fit, A_mcmc, gamma_mcmc, dt_break_mcmc)
 
         fig = plt.figure(figsize=(10, 6))
         plt.errorbar(dt, sf_mag, yerr=err, fmt='o', capsize=3,
@@ -1644,7 +1739,7 @@ def bpl_mcmc(old_dict, initial_guess=[0.5, 0.5, 100], model_check=False,
         inds = np.random.randint(len(samples), size=100)
         for ind in inds:
             A_samp, gamma_samp, dt_break_samp = samples[ind]
-            plt.plot(dt_fit, broken_power_law_flat(dt_fit, A_samp, gamma_samp, dt_break_samp),
+            plt.plot(dt_fit, model_func(dt_fit, A_samp, gamma_samp, dt_break_samp),
                      'gray', alpha=0.1, linewidth=0.5)
         plt.plot(dt_fit, y_fit, 'r-', linewidth=2, label='Median fit')
         plt.axvline(dt_break_mcmc, color='black', linestyle=':',

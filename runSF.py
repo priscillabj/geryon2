@@ -5,7 +5,8 @@ with filename as input parameter) in parallel
 in parquet files LCs
 
 Usage on the cluster:
-    mpirun -n <nranks> python run_optSF.py
+    mpirun -n <nranks> python run_optSF.py # merged (default)
+    mpirun -n 64 python run_optSF.py --unmerged  # unmerged
 
 Requirements:
     mpi4py, numpy, pandas, scipy, linmix, astropy, matplotlib
@@ -26,20 +27,28 @@ import traceback
 from mpi4py import MPI
 from newSF import optSF
 
-# ── configuration ─────────────────────────────────────────────────────────────
-INPUT_GLOB = os.environ["HOME"] + "/BAT_results/*z[gri]_merged.parquet"
-# INPUT_GLOB = os.environ["HOME"] + "/BAT_results/139.80500_+55.46528_zg_merged.parquet"
-OUTPUT_ROOT = os.path.join(os.environ["HOME"], "results", "partials")
-# CUTOFF = time.mktime(time.strptime("2026-06-25", "%Y-%m-%d"))  # rerun anything older
+import argparse
+import json
+from pathlib import Path
 
-N_SOURCES = 10
+# ── configuration ─────────────────────────────────────────────────────────────
+# INPUT_GLOB = os.environ["HOME"] + "/BAT_results/*z[gri]_merged.parquet"
+# INPUT_GLOB = os.environ["HOME"] + "/BAT_results/139.80500_+55.46528_zg_merged.parquet"
+
+CUTOFF = time.mktime(time.strptime("2026-08-17", "%Y-%m-%d"))  # rerun anything older
+DATA_DIR = Path(os.environ["HOME"]) / "BAT_results"
+OUTPUT_ROOT = os.path.join(os.environ["HOME"], "results", "partials")
+
+# N_SOURCES = 10
+N_SOURCES = None
 OPTsf_KWARGS = dict(
     save        = True,
     # clip        = True,
-    showallcs   = True,
-    save_plt    = True,
+    # showallcs   = True,
+    # save_plt    = True,
     sigma_filter= True,
     x           = 10,
+    # plot_sigma  = True
 )
 
 # ── MPI setup ─────────────────────────────────────────────────────────────────
@@ -72,8 +81,10 @@ def output_exists(f):
     if not hits:
         return False
     p = hits[0]
-    # if os.path.getmtime(p) < CUTOFF:      # stale — rerun
-    #     return False
+    if os.path.getmtime(p) < CUTOFF:      # stale — rerun
+        return False
+    if not os.path.exists(p):  #True if file does NOT exist, False if it does
+        return False
     try:
         with open(p, "rb") as fh:
             pickle.load(fh)
@@ -85,8 +96,20 @@ def output_exists(f):
 def main():
     if rank == 0:
         job_start = time.time()
-        all_files = sorted(glob.glob(INPUT_GLOB))[:N_SOURCES]
+        # all_files = sorted(glob.glob(INPUT_GLOB))[:N_SOURCES]
         # subset = all_files[:N_SOURCES]
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--unmerged", action="store_true", help="Use unmerged files from JSON index")
+        args = parser.parse_args()
+        
+        if args.unmerged:
+            UNMERGED_JSON = DATA_DIR / "unmerged_files.json"
+            all_files = [str(DATA_DIR / p) for p in json.loads(UNMERGED_JSON.read_text())][:N_SOURCES]
+        else:
+            # INPUT_GLOB = str(DATA_DIR / "*z[gri]_merged.parquet")
+            INPUT_GLOB = str(DATA_DIR / "*.parquet")
+            all_files = sorted(glob.glob(INPUT_GLOB))[:N_SOURCES]
+
         print(f"[rank 0] {len(all_files)} files to process across {nrank} ranks",
               flush=True)
     else:
@@ -101,9 +124,9 @@ def main():
     print(f"[rank {rank}] assigned {len(my_files)} files", flush=True)
 
     for f in my_files:
-        # if output_exists(f):
-            # print(f"[rank {rank}] skip (exists) — {f}", flush=True)
-            # continue
+        if output_exists(f):
+            print(f"[rank {rank}] skip (exists) — {f}", flush=True)
+            continue
         t0 = time.time()
         try:
             result = optSF(f, **OPTsf_KWARGS)

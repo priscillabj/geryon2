@@ -76,9 +76,9 @@ def _star_stats(s, col, tag):
     return s
 
 
-def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB'),
-                agn_index=None, match_radius_arcsec=3.0, mag_pad=0.5,
-                sigma_filter=True, save_sigma=True, x=10,
+def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB',),
+                agn_index=None, match_radius_arcsec=3.0, mag_pad=None,
+                sigma_filter=True, save_sigma=True, x=100,
                 flux=False, zp=AB_ZP,
                 agg='mean', sigma=3.0, min_for_clip=5, min_stars=3, min_epochs=5,
                 verbose=False):
@@ -86,10 +86,10 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB'),
     Returns (agn, stars, out):
         agn, stars : dict {tag: DataFrame} carrying the per-aperture stat columns
         out        : dict with RA/DEC/band/CCDquadID/object_index and out['metrics'][tag]
- 
+
     metrics[tag]: n_stars, n_stars_preclip, n_epochs, agn, cs_mean, cs_std,
     cs_median, cs_max, sigma, perc, star_stat (clipped Series), star_stat_all.
- 
+
     mag_pad : half-width of the extra brightness bracket, in mag; None to rely
               entirely on quality_cuts.
     flux    : compute the statistic on uJy = 10**(-0.4*(mag - zp)) instead of on
@@ -97,7 +97,7 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB'),
               absolute rather than fractional, so the brightness bracket is doing
               real work and mag_pad=None is a bad idea.  Selection and the bracket
               always happen in magnitudes; only the statistic changes space.
- 
+
     On failure returns (None, None, None).
     """
     file = Path(file)
@@ -107,30 +107,30 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB'),
         band = band_file
     elif band != band_file:
         raise ValueError(f'band={band!r} but filename says {band_file!r}: {name}')
- 
+
     df = _prep(pd.read_parquet(file))
     df = df[df['filtercode'] == f'z{band}']
     if df.empty:
         if verbose:
             print(f'{name}: no z{band} rows')
         return None, None, None
- 
+
     if agn_index is None:
         tgt = SkyCoord(ra=ra, dec=dec, unit='deg')     # scalar: _find_target_obj does int(idx)
         agn_index = _find_target_obj(file, tgt, match_radius_arcsec)
         if agn_index is None:
             return None, None, None
- 
+
     ccd = df.loc[df['object_index'] == agn_index, 'CCDquadID'].mode()[0]
- 
+
     agn_out, stars_out, metrics = {}, {}, {}
     aggf = {'mean': 'mean', 'sum': 'sum', 'median': 'median'}[agg]
     sigma_keep = None          # object_index surviving sigma filtering; computed once
- 
+
     for col in mag_columns:
         tag = _tag(col)
         mag_err = col.replace('MAG_', 'MERR_', 1)
- 
+
         # --- target light curve ---
         a = _target_lc(df[df['object_index'] == agn_index], mag_err)
         a = a.dropna(subset=[col]).copy()
@@ -139,7 +139,7 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB'),
                 print(f'{name} {tag}: {len(a)} epochs after quality cut')
             metrics[tag] = None
             continue
- 
+
         # --- comparison-star pool ---
         s = quality_flags(df, a)
         if s.empty:
@@ -147,42 +147,42 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB'),
                 print(f'{name} {tag}: empty cs')
             metrics[tag] = None
             continue
- 
+
         # sigma filtering is run once (on mag_columns[0]) and reused: it renames
         # the mag column to MAG_4_TOT_AB, which collides for any other aperture
         if sigma_filter and sigma_keep is None:
-            filtered = run_sigma_filtering(
+            filtered, sdiag = run_sigma_filtering(
                 s.rename(columns={col: 'MAG_4_TOT_AB'}),
                 agn_indices=agn_index, save_file=save_sigma, plot=False,
                 save_plt=save_sigma, filename=str(file), ra=ra, dec=dec)
             sigma_keep = pd.unique(filtered['object_index'])
         if sigma_keep is not None:
             s = s[s['object_index'].isin(sigma_keep)]
- 
+
         s = quality_cuts(s, a, col, x=x)
         s = s[(s['object_index'] != agn_index) &
               (s['CCDquadID'] == ccd) &
               (s['mjd'].isin(a['mjd']))].dropna(subset=[col]).copy()
- 
+
         if mag_pad is not None:
             med = s.groupby('object_index')[col].median()
             lo, hi = a[col].min() - mag_pad, a[col].max() + mag_pad
             s = s[s['object_index'].isin(med[(med >= lo) & (med <= hi)].index)].copy()
- 
+
         if s['object_index'].nunique() < min_stars:
             if verbose:
                 print(f'{name} {tag}: only {s["object_index"].nunique()} stars left')
             metrics[tag] = None
             continue
- 
+
         val = col
         if flux:
             val = f'FLUX_{tag}_uJy'
             a[val] = mag2flux(a[col], zp)
             s[val] = mag2flux(s[col], zp)
- 
+
         s = _star_stats(s, val, tag)
- 
+
         # one row per epoch carries the reference level and scale for the target
         ep = s.drop_duplicates('mjd')[['mjd', f'median_per_epoch_{tag}', f'MAD_{tag}']]
         a = a.merge(ep, on='mjd', how='left')
@@ -190,7 +190,7 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB'),
         a[f'dmag_{tag}'] = (a[val] - a[f'median_mag_{tag}']).abs()
         a[f'residual_{tag}'] = (a[f'dmag_{tag}'] - a[f'median_per_epoch_{tag}']).abs()
         a[f'ZMAD_{tag}'] = a[f'residual_{tag}'] / a[f'MAD_{tag}']
- 
+
         # compare target and stars on the same epochs only
         good = a.loc[a[f'ZMAD_{tag}'].notna(), 'mjd']
         sg = s[s['mjd'].isin(good) & s[f'ZMAD_{tag}'].notna()]
@@ -199,12 +199,12 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB'),
             metrics[tag] = None
             continue
         agn_stat = float(a.loc[a['mjd'].isin(good), f'ZMAD_{tag}'].agg(aggf))
- 
+
         v = star_stat.values
         mask = (~sigma_clip(v, sigma=sigma, maxiters=5).mask
                 if len(v) > min_for_clip else np.ones(len(v), bool))
         clipped = star_stat[mask]
- 
+
         mu = clipped.mean()
         sd = clipped.std(ddof=1) if len(clipped) > 1 else np.nan
         metrics[tag] = {
@@ -224,15 +224,15 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB'),
             'star_stat_all': star_stat,
         }
         agn_out[tag], stars_out[tag] = a, s
- 
+
     if not agn_out:
         return None, None, None
     out = {'RA': ra, 'DEC': dec, 'band': band, 'CCDquadID': ccd,
            'object_index': agn_index, 'agg': agg,
            'space': 'flux' if flux else 'mag', 'metrics': metrics}
     return agn_out, stars_out, out
- 
- 
+
+
 def zmad_batch(files, **kw):
     """Tidy one-row-per-(file, aperture) summary."""
     rows = []
@@ -248,4 +248,35 @@ def zmad_batch(files, **kw):
                          'object_index': out['object_index'], 'aperture': tag,
                          'space': out['space'],
                          **{k: v for k, v in m.items() if not isinstance(v, pd.Series)}})
+    return pd.DataFrame(rows)
+
+
+def zmad_null(file, n=20, seed=0, tag=None, **kw):
+    """Empirical null: re-run the metric with n comparison stars standing in as
+    the target.  Each star is excluded from its own pool, so a well-behaved
+    metric returns sigma scattered around 0.  Costs n+1 full passes over the
+    file, so use it on a few sources, not the whole sample.
+
+        null = zmad_null(f, n=20)
+        null['sigma'].describe()
+    """
+    agn, stars, out = zmad_metric(file, **kw)
+    if out is None:
+        return pd.DataFrame()
+    tag = tag or next(t for t, m in out['metrics'].items() if m is not None)
+
+    pool = pd.unique(stars[tag]['object_index'])
+    rng = np.random.default_rng(seed)
+    pick = rng.choice(pool, size=min(n, len(pool)), replace=False)
+
+    rows = [{'object_index': int(out['object_index']), 'is_agn': True,
+             'sigma': out['metrics'][tag]['sigma'], 'perc': out['metrics'][tag]['perc'],
+             'n_stars': out['metrics'][tag]['n_stars']}]
+    for oi in pick:
+        _, _, o = zmad_metric(file, agn_index=oi, **kw)
+        if o is None or o['metrics'].get(tag) is None:
+            continue
+        m = o['metrics'][tag]
+        rows.append({'object_index': int(oi), 'is_agn': False, 'sigma': m['sigma'],
+                     'perc': m['perc'], 'n_stars': m['n_stars']})
     return pd.DataFrame(rows)

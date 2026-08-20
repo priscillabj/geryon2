@@ -41,14 +41,15 @@ from newSF import SF_linmix
 # ── configuration ─────────────────────────────────────────────────────────────
 X          = 10                                    # must match the optSF run
 INPUT_GLOB = os.environ["HOME"] + f"/results/partials/*/*_{X}cs.pkl"
+# INPUT_GLOB = os.environ["HOME"] + "/SDSS_S82_QSO/*/ztfphot_stars_*/sf_out/*.pkl"
 FIT_SUFFIX = "_linmixfit.pkl"                      # output: <input stem> + this
 TIMEOUT_S  = 300
-SAVE_PLOT  = True
-MTIME_DAY  = "2026-07-23"                          # None = no date filter;
+SAVE_PLOT  = False
+MTIME_DAY  = "2026-08-18"                          # None = no date filter;
+# MTIME_DAY  = None                          # None = no date filter;
                                                    # else keep files modified on this day
 
 LINMIX_KWARGS = dict(
-    phot     = False,
     verbose  = False,
     amp_at   = 365,
     plot     = False,
@@ -92,7 +93,7 @@ def build_file_list():
         print(f"[master] date filter {MTIME_DAY}: {len(all_files)} files match",
               flush=True)
 
-    todo = [f for f in all_files if not os.path.exists(out_name(f))]
+    todo = [f for f in all_files] #if not os.path.exists(out_name(f))]
     print(f"[master] {len(all_files)} SF pkl files found, "
           f"{len(all_files) - len(todo)} already fitted, {len(todo)} to do",
           flush=True)
@@ -102,7 +103,15 @@ def build_file_list():
 def process(pkl_file):
     """Load one SF dict, fit it with a hard timeout, save the result."""
     with open(pkl_file, "rb") as f:
-        sf_dict = pickle.load(f)
+        payload = pickle.load(f)
+
+    # run_txt_sf.py writes a wrapper: payload['SF_dict'] is a 1-element list.
+    # optSF writes the fit dict directly. Support both.
+    if "SF_dict" in payload:
+        sf_dict = payload["SF_dict"][0]
+        sf_dict.setdefault("RA", payload.get("object"))   # SF_linmix uses RA for naming
+    else:
+        sf_dict = payload
 
     signal.signal(signal.SIGALRM, _alarm_handler)
     signal.alarm(TIMEOUT_S)
@@ -117,8 +126,13 @@ def process(pkl_file):
     if fitted is None:
         return "skipped (SF_linmix returned None)"
 
+    # with open(out_name(pkl_file), "wb") as f:
+        # pickle.dump(fitted, f)
+    
+    out = dict(payload)          # keep object/run/n_epochs/max_magerr provenance
+    out["SF_dict"] = [fitted]
     with open(out_name(pkl_file), "wb") as f:
-        pickle.dump(fitted, f)
+        pickle.dump(out, f)
     return "done"
 
 

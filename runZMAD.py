@@ -76,7 +76,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--list', help='file of basenames or paths, one per line')
     p.add_argument('--band', default='g')
-    p.add_argument('--limit', type=int)
+    p.add_argument('--limit', type=int) #N_SOURCES
     p.add_argument('--offset', type=int, default=0)
     p.add_argument('--ncores', type=int,
                    default=int(os.environ.get('PBS_NP', os.cpu_count())))
@@ -111,6 +111,9 @@ def main():
     jsonl = out_path.with_suffix('.jsonl')
 
     files = select_files(args)
+    if args.restart and jsonl.exists():
+        jsonl.unlink()          # the jsonl is the source of truth, not the parquet
+        
     done = set()
     if jsonl.exists() and not args.restart:
         with open(jsonl) as fh:

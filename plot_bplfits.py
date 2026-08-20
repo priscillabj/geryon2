@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-plot_bplfits_flat.py
+plot_bplfits.py
 Regenerate broken-power-law fit plots from already-saved outputs, with no refit.
-Flat-model only version: imports and draws broken_power_law_flat.
 
 Pairs each  <stem>_bplfit.pkl  (fit params: A, gamma, dt_break)
 with its input <stem>.pkl        (SF data: SF, SFmaxerr, SFminerr)
 and overlays the median fit on the structure-function points.
 
 Usage:
-    python plot_bplfits_flat.py                 # save a PNG next to every _bplfit.pkl
-    python plot_bplfits_flat.py --show          # show interactively instead of saving
-    python plot_bplfits_flat.py PATTERN         # only fits whose path contains PATTERN
+    python plot_bplfits.py                 # save a PNG next to every _bplfit.pkl
+    python plot_bplfits.py --show          # show interactively instead of saving
+    python plot_bplfits.py PATTERN         # only fits whose path contains PATTERN
 """
 
 import os
+import re
 import sys
 import glob
 import pickle
@@ -24,17 +24,17 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-# reuse the exact model so the drawn curve matches the fit
-from newSF import broken_power_law_flat
+# reuse the exact models so the drawn curve matches the fit
+from newSF import BPL_MODELS
 
-X          = 10
-FIT_GLOB   = os.environ["HOME"] + f"/results/partials/*/*_{X}cs_bplfit.pkl"
-FIT_SUFFIX = "_bplfit.pkl"
+X        = 10
+# matches both _bpl_flatfit.pkl and _bpl_at_breakfit.pkl
+FIT_GLOB = os.environ["HOME"] + f"/results/partials/*/*_{X}cs_bpl_*fit.pkl"
 
 
 def input_pkl(fit_pkl):
-    """<stem>_bplfit.pkl -> <stem>.pkl"""
-    return fit_pkl[:-len(FIT_SUFFIX)] + ".pkl"
+    """<stem>_bpl_<model>fit.pkl -> <stem>.pkl"""
+    return re.sub(r"_bpl_\w+fit\.pkl$", ".pkl", fit_pkl)
 
 
 def plot_one(fit_pkl, show=False):
@@ -59,8 +59,9 @@ def plot_one(fit_pkl, show=False):
     err  = ((d["SFmaxerr"].reindex(sf.index) + d["SFminerr"].reindex(sf.index)) / 2)
 
     A, g, b = fit["A"], fit["gamma"], fit["dt_break"]
+    model   = BPL_MODELS[fit.get("model", "flat")]   # older pkls have no 'model' key -> flat
     dt_fit  = np.logspace(np.log10(min(dt)), np.log10(max(dt)), 100)
-    y_fit   = broken_power_law_flat(dt_fit, A, g, b)
+    y_fit   = model(dt_fit, A, g, b)
 
     plt.figure(figsize=(8, 6))
     plt.errorbar(dt, sf, yerr=err, fmt="o", capsize=3, color="blue", label="SF data")

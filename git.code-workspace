@@ -11,6 +11,9 @@
 		},
 		{
 			"path": "../results"
+		},
+		{
+			"path": "../SDSS_S82_QSO"
 		}
 	],
 	"settings": {}
