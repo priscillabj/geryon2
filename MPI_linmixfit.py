@@ -45,7 +45,7 @@ INPUT_GLOB = os.environ["HOME"] + f"/results/partials/*/*_{X}cs.pkl"
 FIT_SUFFIX = "_linmixfit.pkl"                      # output: <input stem> + this
 TIMEOUT_S  = 300
 SAVE_PLOT  = False
-MTIME_DAY  = "2026-08-18"                          # None = no date filter;
+MTIME_DAY  = "2026-08-19"                          # None = no date filter;
 # MTIME_DAY  = None                          # None = no date filter;
                                                    # else keep files modified on this day
 
@@ -85,15 +85,11 @@ def build_file_list():
 
     # optional subset: keep only files modified on MTIME_DAY
     if MTIME_DAY is not None:
-        target = datetime.date.fromisoformat(MTIME_DAY)
-        all_files = [
-            f for f in all_files
-            if datetime.date.fromtimestamp(os.path.getmtime(f)) == target
-        ]
-        print(f"[master] date filter {MTIME_DAY}: {len(all_files)} files match",
-              flush=True)
+        cutoff = datetime.datetime.fromisoformat(MTIME_DAY).timestamp()
+        all_files = [f for f in all_files if os.path.getmtime(f) >= cutoff]
+        print(f"[master] mtime >= {MTIME_DAY}: {len(all_files)} files match", flush=True)
 
-    todo = [f for f in all_files] #if not os.path.exists(out_name(f))]
+    todo = [f for f in all_files if not os.path.exists(out_name(f))]
     print(f"[master] {len(all_files)} SF pkl files found, "
           f"{len(all_files) - len(todo)} already fitted, {len(todo)} to do",
           flush=True)

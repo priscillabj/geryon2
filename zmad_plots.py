@@ -325,8 +325,8 @@ def zmad_type_hist(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
     v = d[sigma_col]
     if log:
         n_bad = int((v <= 0).sum())
-        # d = d[v > 0]
-        d = d.assign(_x=np.log10(np.abs(d[sigma_col])))
+        d = d[v > 0]
+        d = d.assign(_x=np.log10(d[sigma_col]))
         xlabel = f'log {sigma_col}'
     else:
         n_bad, xlabel = 0, sigma_col
@@ -440,6 +440,11 @@ def _main():
                     'per-source figures re-run zmad_metric on the chosen files.')
     p.add_argument('parquet', help='output of run_zmad.py')
     p.add_argument('--aperture', default=None)
+    p.add_argument('--prefix', default='', help="e.g. 'zmad_' for bat_master.parquet")
+    p.add_argument('--types', metavar='COL',
+                   help='class column (e.g. clasf) -> also write the type figures')
+    p.add_argument('--cut', type=float, default=10.0, help='sigma cut for the type figures')
+    p.add_argument('--census', action='store_true', help='print the row accounting only')
     p.add_argument('--summary', metavar='PNG', help='write the population figure here')
     p.add_argument('--top', type=int, metavar='N',
                    help='also re-run the N highest-sigma sources and plot each')
@@ -450,8 +455,23 @@ def _main():
 
     plt.switch_backend('Agg')
     d = pd.read_parquet(os.path.expanduser(args.parquet))
+    outdir = os.path.expanduser(args.outdir)
 
-    fig, _ = zmad_summary(d, aperture=args.aperture, sigma_cut=args.sigma_cut)
+    if args.census:
+        zmad_census(d, type_col=args.types or 'clasf', prefix=args.prefix)
+        return
+
+    if args.types:
+        zmad_census(d, type_col=args.types, prefix=args.prefix)
+        zmad_type_hist(d, type_col=args.types, prefix=args.prefix, cut=args.cut,
+                       save=os.path.join(outdir, 'zmad_type_hist.png'), dpi=args.dpi)
+        for mode in ('composition', 'rate'):
+            zmad_type_fraction(d, type_col=args.types, prefix=args.prefix,
+                               cut=args.cut, mode=mode, dpi=args.dpi,
+                               save=os.path.join(outdir, f'zmad_type_{mode}.png'))
+
+    fig, _ = zmad_summary(d, aperture=args.aperture, prefix=args.prefix,
+                          sigma_cut=args.sigma_cut)
     dest = os.path.expanduser(args.summary or 'zmad_summary.png')
     os.makedirs(os.path.dirname(os.path.abspath(dest)), exist_ok=True)
     fig.savefig(dest, dpi=args.dpi, bbox_inches='tight')

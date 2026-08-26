@@ -103,7 +103,8 @@ def main():
         args = parser.parse_args()
         
         if args.unmerged:
-            UNMERGED_JSON = DATA_DIR / "unmerged_files.json"
+            # UNMERGED_JSON = DATA_DIR / "unmerged_files.json"
+            UNMERGED_JSON = DATA_DIR / "tosync.json"
             all_files = [str(DATA_DIR / p) for p in json.loads(UNMERGED_JSON.read_text())][:N_SOURCES]
         else:
             # INPUT_GLOB = str(DATA_DIR / "*z[gri]_merged.parquet")

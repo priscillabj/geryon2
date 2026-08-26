@@ -36,7 +36,7 @@ INPUT_GLOB = os.environ["HOME"] + f"/results/partials/*/*_{X}cs.pkl"
 FIT_SUFFIX = f"_bpl_{MODEL}fit.pkl"                 # output: <input stem> + this (model in name)
 TIMEOUT_S  = 300
 # MTIME_DAY  = None                                   # None = no date filter;
-MTIME_DAY  = "2026-08-18"                                   # None = no date filter;
+MTIME_DAY  = "2026-08-19"                                   # None = no date filter;
                                                     # else "YYYY-MM-DD" to subset
 N_SOURCES = None
 SAVE_PLOT  = False                                  # save per-source bpl fit PNGs
@@ -71,15 +71,11 @@ def build_file_list():
     )[:N_SOURCES]
 
     if MTIME_DAY is not None:
-        target = datetime.date.fromisoformat(MTIME_DAY)
-        all_files = [
-            f for f in all_files
-            if datetime.date.fromtimestamp(os.path.getmtime(f)) == target
-        ]
-        print(f"[master] date filter {MTIME_DAY}: {len(all_files)} files match",
-              flush=True)
+        cutoff = datetime.datetime.fromisoformat(MTIME_DAY).timestamp()
+        all_files = [f for f in all_files if os.path.getmtime(f) >= cutoff]
+        print(f"[master] mtime >= {MTIME_DAY}: {len(all_files)} files match", flush=True)
 
-    todo = [f for f in all_files]# if not os.path.exists(out_name(f))]
+    todo = [f for f in all_files if not os.path.exists(out_name(f))]
     print(f"[master] {len(all_files)} SF pkl files found, "
           f"{len(all_files) - len(todo)} already fitted, {len(todo)} to do",
           flush=True)

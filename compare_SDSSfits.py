@@ -116,7 +116,7 @@ def main():
         ax.errorbar(xb, xa,
                     xerr=(df[f"{tag}_b_lo"], df[f"{tag}_b_hi"]),
                     yerr=(df[f"{tag}_a_lo"], df[f"{tag}_a_hi"]),
-                    fmt="o", ms=5, capsize=2, lw=0.8, alpha=0.8, c="crimson")
+                    fmt="o", ms=5, capsize=2, lw=0.8, alpha=0.6, c="mediumseagreen")
         both = np.concatenate([xa, xb])
         both = both[np.isfinite(both)]
         if logscale:
@@ -145,16 +145,39 @@ def main():
         ax.set_ylabel(f"{name}  —  {args.label_a}")
 
         # summary: ratio for amplitude, difference for slope
+        # --- pull: z = (a-b)/sqrt(sa^2+sb^2), asymmetric errors taken on the
+        #     side facing the other point.  A_365 in dex, gamma linear.
+        a_hi = df[f"{tag}_a_hi"].values.astype(float)
+        a_lo = df[f"{tag}_a_lo"].values.astype(float)
+        b_hi = df[f"{tag}_b_hi"].values.astype(float)
+        b_lo = df[f"{tag}_b_lo"].values.astype(float)
+
         if logscale:
-            stat = xa / xb
-            txt = (f"median ratio {np.nanmedian(stat):.3f}\n"
-                   f"scatter (dex) {np.nanstd(np.log10(stat)):.3f}\n"
-                   f"N = {len(df)}")
+            d  = np.log10(xa) - np.log10(xb)
+            sa = np.where(d < 0, a_hi, a_lo) / (xa * np.log(10))
+            sb = np.where(d < 0, b_lo, b_hi) / (xb * np.log(10))
         else:
-            stat = xa - xb
-            txt = (f"median offset {np.nanmedian(stat):+.3f}\n"
-                   f"scatter {np.nanstd(stat):.3f}\n"
-                   f"N = {len(df)}")
+            d  = xa - xb
+            sa = np.where(d < 0, a_hi, a_lo)
+            sb = np.where(d < 0, b_lo, b_hi)
+
+        z    = d / np.sqrt(sa ** 2 + sb ** 2)
+        ok   = np.isfinite(z)
+        chi2 = float(np.sum(z[ok] ** 2))
+        dof  = max(int(ok.sum()) - 1, 1)
+
+        if logscale:
+            txt = (f"median ratio {np.nanmedian(xa / xb):.3f}\n"
+                   f"scatter {np.nanstd(d, ddof=1):.3f} dex\n")
+        else:
+            txt = (f"median offset {np.nanmedian(d):+.3f}\n"
+                   f"scatter {np.nanstd(d, ddof=1):.3f}\n")
+        
+        txt += (f"$\\chi^2$/dof = {chi2 / dof:.2f}\n"
+                f"std(pull) = {np.std(z[ok], ddof=1):.2f}\n"
+                f"N = {len(df)}")
+            
+
         ax.text(0.04, 0.96, txt, transform=ax.transAxes, va="top", fontsize=9,
                 bbox=dict(fc="white", ec="0.7", alpha=0.9))
         ax.legend(loc="lower right", fontsize=9)
