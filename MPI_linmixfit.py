@@ -30,11 +30,13 @@ Safety (per the stage-3 lessons):
 
 import os
 import glob
+import json
 import time
 import signal
 import pickle
 import datetime
 import traceback
+from pathlib import Path
 from mpi4py import MPI
 from newSF import SF_linmix
 
@@ -45,9 +47,16 @@ INPUT_GLOB = os.environ["HOME"] + f"/results/partials/*/*_{X}cs.pkl"
 FIT_SUFFIX = "_linmixfit.pkl"                      # output: <input stem> + this
 TIMEOUT_S  = 300
 SAVE_PLOT  = False
-MTIME_DAY  = "2026-08-19"                          # None = no date filter;
-# MTIME_DAY  = None                          # None = no date filter;
+# MTIME_DAY  = "2026-08-19"                          # None = no date filter;
+MTIME_DAY  = None                          # None = no date filter;
                                                    # else keep files modified on this day
+
+# restrict inputs to the _{X}cs.pkl produced by runSF.py from this parent list
+# (the same JSON runSF.py --unmerged reads). None = fit every *_{X}cs.pkl found.
+DATA_DIR  = Path(os.environ["HOME"]) / "BAT_results"
+# FILE_LIST = DATA_DIR / "tosync.json"
+FILE_LIST = os.environ["HOME"] + f'/results/input_files.json'
+# FILE_LIST = None
 
 LINMIX_KWARGS = dict(
     verbose  = False,
@@ -77,11 +86,28 @@ def out_name(pkl_file):
     return pkl_file[:-len(".pkl")] + FIT_SUFFIX
 
 
+def allowed_pkl_names():
+    """basenames of the _{X}cs.pkl outputs whose parent parquet is in FILE_LIST.
+    optSF names each output '<parquet_basename>_{X}cs.pkl', so the parent list
+    maps 1:1 onto expected pkl basenames."""
+    # parents = json.loads(Path(FILE_LIST).read_text())
+    parents = json.loads(FILE_LIST.read_text())
+    return {f"{os.path.basename(p)}_{X}cs.pkl" for p in parents}
+
+
 def build_file_list():
     all_files = sorted(
         f for f in glob.glob(INPUT_GLOB)
         if not f.endswith(FIT_SUFFIX)              # defensive: never refit outputs
     )
+
+    # restrict to outputs created by runSF.py from FILE_LIST's parent parquets
+    if FILE_LIST is not None:
+        allowed = allowed_pkl_names()
+        all_files = [f for f in all_files if os.path.basename(f) in allowed]
+        print(f"[master] file-list {os.path.basename(str(FILE_LIST))}: "
+              f"{len(all_files)}/{len(allowed)} of the listed parents present",
+              flush=True)
 
     # optional subset: keep only files modified on MTIME_DAY
     if MTIME_DAY is not None:

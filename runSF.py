@@ -6,7 +6,7 @@ in parquet files LCs
 
 Usage on the cluster:
     mpirun -n <nranks> python run_optSF.py # merged (default)
-    mpirun -n 64 python run_optSF.py --unmerged  # unmerged
+    mpirun -n 64 python run_optSF.py --list ~/results/input_files.json  # unmerged
 
 Requirements:
     mpi4py, numpy, pandas, scipy, linmix, astropy, matplotlib
@@ -96,18 +96,34 @@ def output_exists(f):
 def main():
     if rank == 0:
         job_start = time.time()
-        # all_files = sorted(glob.glob(INPUT_GLOB))[:N_SOURCES]
-        # subset = all_files[:N_SOURCES]
         parser = argparse.ArgumentParser()
-        parser.add_argument("--unmerged", action="store_true", help="Use unmerged files from JSON index")
+        parser.add_argument("--list", help='subsample: .txt (one per line), .json, .jsonl, '
+                                  '.csv or .parquet with a file/lc_file column')
         args = parser.parse_args()
-        
-        if args.unmerged:
-            # UNMERGED_JSON = DATA_DIR / "unmerged_files.json"
-            UNMERGED_JSON = DATA_DIR / "tosync.json"
-            all_files = [str(DATA_DIR / p) for p in json.loads(UNMERGED_JSON.read_text())][:N_SOURCES]
+
+        if args.list:
+            list_path = Path(args.list)
+            suffix = list_path.suffix.lower()
+
+            if suffix == ".txt":
+                names = [l.strip() for l in list_path.read_text().splitlines() if l.strip()]
+            elif suffix == ".json":
+                names = json.loads(list_path.read_text())
+            elif suffix == ".jsonl":
+                names = [json.loads(l)["file"] for l in list_path.read_text().splitlines() if l.strip()]
+            # elif suffix == ".csv":
+            #     df = pd.read_csv(list_path)
+            #     col = "file" if "file" in df.columns else "lc_file"
+            #     names = df[col].tolist()
+            # elif suffix == ".parquet":
+            #     df = pd.read_parquet(list_path)
+            #     col = "file" if "file" in df.columns else "lc_file"
+            #     names = df[col].tolist()
+            else:
+                raise ValueError(f"Unsupported --list extension: {suffix}")
+
+            all_files = [str(DATA_DIR / p) for p in names][:N_SOURCES]
         else:
-            # INPUT_GLOB = str(DATA_DIR / "*z[gri]_merged.parquet")
             INPUT_GLOB = str(DATA_DIR / "*.parquet")
             all_files = sorted(glob.glob(INPUT_GLOB))[:N_SOURCES]
 

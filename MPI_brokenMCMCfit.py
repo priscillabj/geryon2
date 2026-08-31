@@ -20,11 +20,13 @@ Same structure as run_SFlinmix_mw.py; differences from that driver:
 
 import os
 import glob
+import json
 import time
 import signal
 import pickle
 import datetime
 import traceback
+from pathlib import Path
 from mpi4py import MPI
 from newSF import bpl_mcmc
 
@@ -35,10 +37,17 @@ MODEL      = "at_break"                                 # "flat" (A at dt=1) or 
 INPUT_GLOB = os.environ["HOME"] + f"/results/partials/*/*_{X}cs.pkl"
 FIT_SUFFIX = f"_bpl_{MODEL}fit.pkl"                 # output: <input stem> + this (model in name)
 TIMEOUT_S  = 300
-# MTIME_DAY  = None                                   # None = no date filter;
-MTIME_DAY  = "2026-08-19"                                   # None = no date filter;
+MTIME_DAY  = None                                   # None = no date filter;
+# MTIME_DAY  = "2026-08-19"                                   # None = no date filter;
                                                     # else "YYYY-MM-DD" to subset
 N_SOURCES = None
+
+# restrict inputs to the _{X}cs.pkl produced by runSF.py from this parent list
+# (the same JSON runSF.py --unmerged reads). None = fit every *_{X}cs.pkl found.
+DATA_DIR  = Path(os.environ["HOME"]) / "BAT_results"
+# FILE_LIST = DATA_DIR / "tosync.json"
+FILE_LIST = os.environ["HOME"] + f'/results/input_files.json'
+# FILE_LIST = None
 SAVE_PLOT  = False                                  # save per-source bpl fit PNGs
 VERBOSE    = False                                  # per-fit prints (spams the log)
 
@@ -63,12 +72,31 @@ def out_name(pkl_file):
     return pkl_file[:-len(".pkl")] + FIT_SUFFIX
 
 
+def allowed_pkl_names():
+    """basenames of the _{X}cs.pkl outputs whose parent parquet is in FILE_LIST.
+    optSF names each output '<parquet_basename>_{X}cs.pkl', so the parent list
+    maps 1:1 onto expected pkl basenames."""
+    # parents = json.loads(Path(FILE_LIST).read_text())
+    parents = json.loads(FILE_LIST.read_text())
+    return {f"{os.path.basename(p)}_{X}cs.pkl" for p in parents}
+
+
 def build_file_list():
     all_files = sorted(
         f for f in glob.glob(INPUT_GLOB)
         if not f.endswith(FIT_SUFFIX)              # never refit our own outputs
         and "_linmixfit" not in f                  # nor the linmix driver's outputs
-    )[:N_SOURCES]
+    )
+
+    # restrict to outputs created by runSF.py from FILE_LIST's parent parquets
+    if FILE_LIST is not None:
+        allowed = allowed_pkl_names()
+        all_files = [f for f in all_files if os.path.basename(f) in allowed]
+        print(f"[master] file-list {os.path.basename(str(FILE_LIST))}: "
+              f"{len(all_files)}/{len(allowed)} of the listed parents present",
+              flush=True)
+
+    all_files = all_files[:N_SOURCES]
 
     if MTIME_DAY is not None:
         cutoff = datetime.datetime.fromisoformat(MTIME_DAY).timestamp()
