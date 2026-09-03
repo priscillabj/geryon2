@@ -69,17 +69,24 @@ def main():
 
     out = args.out or args.data_dir / (
         "unmerged_files.json" if args.unmerged else "input_files.json")
+    
+    import pandas as pd    
+    d = pd.read_parquet(args.data_dir/'zmad_all_flux.parquet')
+    
+    # files = d.loc[(d.ok == True) & (d.sigma >= 10), 'file'].drop_duplicates().sort_values().tolist()
+    files = d.loc[(d.sigma >= 10), 'file'].drop_duplicates().sort_values().tolist()
+    # json.dump(files, open(out, 'w'), indent=1)
 
-    groups, unparsed, skipped = scan(args.data_dir)
-    files, (n_merged, n_partial, n_keys) = select(groups, args.unmerged)
+    # groups, unparsed, skipped = scan(args.data_dir)
+    # files, (n_merged, n_partial, n_keys) = select(groups, args.unmerged)
     out.write_text(json.dumps(files, indent=2))
 
     print(f"{len(files)} files -> {out}")
-    print(f"  {n_merged} merged + {n_partial} partial from {n_keys} unmerged keys")
-    print(f"  {len(groups)} keys total")
-    print(f"  {skipped} sci files skipped")
-    if unparsed:
-        print(f"  {len(unparsed)} unparsed, e.g. {unparsed[:3]}", file=sys.stderr)
+    # print(f"  {n_merged} merged + {n_partial} partial from {n_keys} unmerged keys")
+    # print(f"  {len(groups)} keys total")
+    # print(f"  {skipped} sci files skipped")
+    # if unparsed:
+    #     print(f"  {len(unparsed)} unparsed, e.g. {unparsed[:3]}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -36,14 +36,34 @@ def bat_file(ra, dec, band, root=BAT_ROOT):
     return os.path.join(root, f'{ra}_{dec}_z{band}_merged.parquet')
 
 
+QUAD_KEYS = ('field', 'ccdid', 'qid')
+
+# Why the last zmad_metric call returned None.  A single source per process
+# (subprocess engine) or one at a time per worker, so a module global is safe.
+# The driver reads this instead of recording a bare 'no result'.
+FAIL = None
+
+
 def _prep(df):
-    out = df                     # mutates in place: only ever called on a fresh read
-    out['mjd'] = out['OBSMJD'].astype(float)
-    out['ra'] = out['ALPHAWIN_REF'].astype(float)      # kept only for downstream plotting
-    out['dec'] = out['DELTAWIN_REF'].astype(float)
-    out['CCDquadID'] = (out['field'].astype(str) + '_' +
-                        out['ccdid'].astype(str) + '_' +
-                        out['qid'].astype(str))
+    """Mutates in place: only ever called on a fresh read.
+
+    CCDquadID is an integer code, not a string.  These files run to ~2e7 rows
+    and a Python-object string column at that length costs several GB on its
+    own; the value is only ever compared for equality, so the encoding is free.
+    Files missing field/ccdid/qid (single-quadrant products, where the field is
+    in the filename) get a constant code rather than a KeyError.
+    """
+    out = df
+    out['mjd'] = out['OBSMJD'].astype('float64', copy=False)
+
+    have = [k for k in QUAD_KEYS if k in out.columns]
+    if len(have) == len(QUAD_KEYS):
+        out['CCDquadID'] = (out['field'].astype('int64') * 10_000
+                            + out['ccdid'].astype('int64') * 10
+                            + out['qid'].astype('int64'))
+    else:
+        # nothing to group on: the whole file is one quadrant by construction
+        out['CCDquadID'] = np.int64(0)
     return out
 
 
@@ -100,6 +120,9 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB',),
 
     On failure returns (None, None, None).
     """
+    global FAIL
+    FAIL = None
+
     file = Path(file)
     name = file.name
     ra, dec, band_file = radec_filename(name, band=True)
@@ -109,20 +132,26 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB',),
         raise ValueError(f'band={band!r} but filename says {band_file!r}: {name}')
 
     df = _prep(pd.read_parquet(file))
-    df = df[df['filtercode'] == f'z{band}']
+    if 'filtercode' in df.columns:
+        df = df[df['filtercode'] == f'z{band}']
+    # else: single-quadrant products carry no filtercode; the band is in the
+    # filename and the file holds exactly that band by construction
     if df.empty:
         if verbose:
             print(f'{name}: no z{band} rows')
+        FAIL = f'no z{band} rows in file'
         return None, None, None
 
     if agn_index is None:
         tgt = SkyCoord(ra=ra, dec=dec, unit='deg')     # scalar: _find_target_obj does int(idx)
         agn_index = _find_target_obj(file, tgt, match_radius_arcsec)
         if agn_index is None:
+            FAIL = f'no object within {match_radius_arcsec}" of {ra},{dec}'
             return None, None, None
 
-    ccd = df.loc[df['object_index'] == agn_index, 'CCDquadID'].mode()[0]
+    ccd = int(df.loc[df['object_index'] == agn_index, 'CCDquadID'].mode()[0])
 
+    reject = {}                  # tag -> why this aperture produced nothing
     agn_out, stars_out, metrics = {}, {}, {}
     aggf = {'mean': 'mean', 'sum': 'sum', 'median': 'median'}[agg]
     sigma_keep = None          # object_index surviving sigma filtering; computed once
@@ -137,6 +166,7 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB',),
         if len(a) < min_epochs:
             if verbose:
                 print(f'{name} {tag}: {len(a)} epochs after quality cut')
+            reject[tag] = f'{len(a)} epochs < min_epochs {min_epochs}'
             metrics[tag] = None
             continue
 
@@ -145,6 +175,7 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB',),
         if s.empty:
             if verbose:
                 print(f'{name} {tag}: empty cs')
+            reject[tag] = 'quality_flags returned no stars'
             metrics[tag] = None
             continue
 
@@ -172,6 +203,7 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB',),
         if s['object_index'].nunique() < min_stars:
             if verbose:
                 print(f'{name} {tag}: only {s["object_index"].nunique()} stars left')
+            reject[tag] = f'{s["object_index"].nunique()} stars < min_stars {min_stars}'
             metrics[tag] = None
             continue
 
@@ -226,6 +258,8 @@ def zmad_metric(file, band=None, mag_columns=('MAG_4_TOT_AB',),
         agn_out[tag], stars_out[tag] = a, s
 
     if not agn_out:
+        FAIL = ('every aperture rejected: ' +
+                '; '.join(f'{t}={r}' for t, r in reject.items()))
         return None, None, None
     out = {'RA': ra, 'DEC': dec, 'band': band, 'CCDquadID': ccd,
            'object_index': agn_index, 'agg': agg,

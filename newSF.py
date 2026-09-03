@@ -565,6 +565,8 @@ def compute_calstar_sf(cs, mag_column, mag_err, log_bins):
     dp16 = g_dmag_bin.quantile(0.16)
     dp50 = g_dmag_bin.quantile(0.50)
     dp84 = g_dmag_bin.quantile(0.84)
+    # minerr_cs = ((dp50 - dp16)).dropna()
+    # maxerr_cs = ((dp84 - dp50)).dropna()
     minerr_cs = ((dp50 - dp16)/ sqrt_n_cs).dropna()
     maxerr_cs = ((dp84 - dp50)/ sqrt_n_cs).dropna()
 

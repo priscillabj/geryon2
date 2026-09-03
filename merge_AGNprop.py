@@ -47,7 +47,8 @@ AMP   = {"spl": "A_365", "bpl": "A_break"}
 
 # -----ZMAD config ------------------------------------------------------------
 # ZMAD_PAT      = os.path.expanduser("~/results/zmad_sub_*.parquet")   # picks up _r/_i when they exist
-ZMAD_PAT      = os.path.expanduser("~/results/zmad_sub_g_flux.parquet")   
+# ZMAD_PAT      = os.path.expanduser("~/results/zmad_subs_g_flux.parquet")   
+ZMAD_PAT      = os.path.expanduser("~/results/zmad_all_flux.parquet")   
 ZMAD_APERTURE = "4"
 ZMAD_METRICS  = ["ok", "fail_reason", "sigma", "perc", "agn", "cs_mean", "cs_std",
                  "cs_median", "cs_max", "n_stars", "n_stars_preclip", "n_epochs", "space"]
