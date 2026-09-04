@@ -14,7 +14,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-PROPS   = os.path.expanduser("~/results/linmix_merged_props.parquet")
+# PROPS   = os.path.expanduser("~/results/linmix_merged_props.parquet")
+PROPS   = os.path.expanduser("~/results/bat_master_zmadflux2.parquet")
 RESULTS = os.path.expanduser("~/results")
 
 # clasf groups (reconcile with df['clasf'].value_counts()):
@@ -22,24 +23,24 @@ TP1 = ["Sy1", "Sy1.2"]            # Type 1        -> black, hollow
 SY  = ["Sy1.5"]                   # intermediate  -> C2
 TP2 = ["Sy1.8", "Sy1.9", "Sy2"]  # Type 2        -> C1
 
-def load(band):
+def load(band, fit_model):
     df = pd.read_parquet(PROPS)
-    sub = df[(df["band"] == band) & np.isfinite(df["gamma"]) &
-             np.isfinite(df["A_365"]) & df["valid"]]
+    sub = df[(df["band"] == band) & np.isfinite(df[f"gamma_{fit_model}"]) &
+             np.isfinite(df[f"A_365_{fit_model}"]) & df[f"valid_{fit_model}"]]
     return sub
 
-def scatter(band, par):
+def scatter(band, par, fit_model):
     sub = load(band)
     print(f"scatter z{band}: {len(sub)} sources grouped by {par}")
     fig, ax = plt.subplots(figsize=(7, 5))
-    for types, color, label in [(TP1, "black", "Type 1"),
-                                (SY,  "C2",    "Sy1.5"),
-                                (TP2, "C1",    "Type 2")]:
+    for types, color, label in [(TP1, "#9F9F9F", "Type 1"),
+                                (SY,  "#E69F00",    "Sy1.5"),
+                                (TP2, "#56B4E9",    "Type 2")]:
         agn = sub[sub[par].isin(types)]
         if len(agn) == 0:
             continue
-        xerr = np.nan_to_num(np.abs(np.vstack([agn["gamma_minerr"], agn["gamma_maxerr"]])))
-        yerr = np.nan_to_num(np.abs(np.vstack([agn["A_365_minerr"], agn["A_365_maxerr"]])))
+        xerr = np.nan_to_num(np.abs(np.vstack([agn[f"gamma_minerr_{fit_model}"], agn[f"gamma_maxerr_{fit_model}"]])))
+        yerr = np.nan_to_num(np.abs(np.vstack([agn[f"A_365_minerr_{fit_model}"], agn[f"A_365_maxerr_{fit_model}"]])))
         kw = dict(fmt="o", alpha=0.3, color=color, label=f"{label} (n={len(agn)})",
                   xerr=xerr, yerr=yerr, elinewidth=0.6, capsize=0)
         if color == "black":
@@ -53,15 +54,15 @@ def scatter(band, par):
     ax.grid(True, alpha=0.3)
     ax.set_title(f"z{band}")
     ax.legend()
-    out = os.path.join(RESULTS, f"{band}band_amp_vs_gamma_by{par}.png")
+    out = os.path.join(RESULTS, f"{band}band_amp_vs_gamma_by{par}_{fit_model}.png")
     fig.tight_layout(); fig.savefig(out, dpi=150)
     print("wrote", out)
 
-def posterior(band, which):
+def posterior(band, which, fit_model):
     sub = load(band)
     col, xlabel, color, bins, xlim = {
-        "gamma": ("gamma", r"$\gamma$ (slope)",        "green", np.linspace(-0.2, 1, 30), (-0.2, 0.875)),
-        "amp":   ("A_365", "SF amplitude at 365 days", "blue",  np.linspace(-0.1, 2, 30), (-0.1, 2.0)),
+        "gamma": (f"gamma_{fit_model}", r"$\gamma$ (slope)",        "green", np.linspace(-0.2, 1, 30), (-0.2, 0.875)),
+        "amp":   (f"A_365_{fit_model}", "SF amplitude at 365 days", "blue",  np.linspace(-0.1, 2, 30), (-0.1, 2.0)),
     }[which]
     print(f"{which} posterior z{band}: {len(sub)} sources")
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -71,7 +72,7 @@ def posterior(band, which):
     ax.set_xlim(*xlim)
     ax.grid(True, alpha=0.3)
     ax.set_title(f"z{band}")
-    out = os.path.join(RESULTS, f"{band}band_{which}_posterior.png")
+    out = os.path.join(RESULTS, f"{band}band_{which}_distribution_{fit_model}.png")
     fig.tight_layout(); fig.savefig(out, dpi=150)
     print("wrote", out)
 
@@ -80,18 +81,20 @@ if __name__ == "__main__":
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--band", default="g", choices=["g", "r", "i"])
     p.add_argument("--par", default="clasf", help="clasf column to group the scatter by")
+    p.add_argument("--hist", choices=["gamma,amp"], help="gamma or amp posterior histogram")
+    p.add_argument("--fit_model", default="spl", choices=["spl", "bpl"])
     g = p.add_mutually_exclusive_group()
     g.add_argument("--scatter", action="store_true", help="amp vs gamma scatter (default)")
-    g.add_argument("--gamma", choices=["posterior"], help="gamma posterior histogram")
-    g.add_argument("--amp",   choices=["posterior"], help="amp posterior histogram")
+    # g.add_argument("--gamma", choices=["posterior"], help="gamma posterior histogram")
+    # g.add_argument("--amp",   choices=["posterior"], help="amp posterior histogram")
     a = p.parse_args()
 
-    if a.gamma:
-        posterior(a.band, "gamma")
-    elif a.amp:
-        posterior(a.band, "amp")
+    if a.hist:
+        posterior(a.band, a.hist, a.fit_model)
+    # elif a.amp:
+    #     posterior(a.band, "amp", a.fit_model)
     else:
-        scatter(a.band, a.par)
+        scatter(a.band, a.par, a.fit_model)
 
 # # plot: finite + valid only (the pipeline has historically stored
 # # non-finite _A_365_spl from 10**alpha overflow with valid=True, so filter both)

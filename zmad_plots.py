@@ -222,8 +222,8 @@ def zmad_summary(df, aperture=None, prefix='', sigma_cut=3.0, clip=99.5,
 
 # Seyfert palette; extend or override with the `colors` argument.
 TYPE_COLOR = {
-    'Sy1': '#9F9F9F', 'Sy1.2': 'white', 'Sy1.5': 'skyblue',
-    'Sy1.8': 'orchid', 'Sy1.9': 'mediumvioletred', 'Sy2': '#4A0E2E',
+    'Sy1': '#9F9F9F', 'Sy1.2': 'white', 'Sy1.5': '#E69F00',
+    'Sy1.8': '#04D9FF', 'Sy1.9': '#56B4E9', 'Sy2': '#0072B2',
 }
 TYPE_HATCH = {'Sy1': '', 'Sy1.2': '///'}
 
@@ -233,8 +233,11 @@ TYPE_GROUPS = {
     'Sy1.5': ['Sy1.5'],
     'Type 2 (Sy1.8-1.9-2)': ['Sy1.8', 'Sy1.9', 'Sy2'],
 }
-GROUP_COLOR = {'Type 1 (Sy1-1.2)': 'black', 'Sy1.5': 'C2',
-               'Type 2 (Sy1.8-1.9-2)': 'C1'}
+GROUP_COLOR = {'Type 1 (Sy1-1.2)': 'black', 'Sy1.5': '#E69F00',
+               'Type 2 (Sy1.8-1.9-2)': '#56B4E9'}
+
+# linestyle for groups drawn as unfilled steps (see `outline`)
+GROUP_STYLE = {'Type 1 (Sy1-1.2)': '--', 'Type 2 (Sy1.8-1.9-2)': '-'}
 
 
 def _ok(d, ok_col):
@@ -295,8 +298,8 @@ def _typed(d, type_col, sigma_col, ok_col):
 
 
 def zmad_type_hist(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
-                   cut=10.0, log=True, groups=None, colors=None,
-                   outline=('Type 1 (Sy1-1.2)',), bins=20, figsize=(7, 5),
+                   cut=10.0, log=True, groups=None, colors=None,linestyles=None,
+                   outline=('Type 1 (Sy1-1.2)','Type 2 (Sy1.8-1.9-2)'), bins=20, figsize=(7, 5),
                    ax=None, save=None, dpi=150):
     """Sigma distribution by coarse AGN type, with an optional cut line.
 
@@ -313,6 +316,7 @@ def zmad_type_hist(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
     colors = {**GROUP_COLOR, **(colors or {})}
     d_in = d
     d = _typed(d, type_col, sigma_col, ok_col)
+    linestyles = {**GROUP_STYLE, **(linestyles or {})}
 
     lut = {t: g for g, members in groups.items() for t in members}
     d = d.assign(_grp=d[type_col].map(lut))
@@ -341,7 +345,7 @@ def zmad_type_hist(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
         if xs.empty:
             continue
         if g in outline:
-            ax.hist(xs, bins=edges, histtype='step', linestyle='--',
+            ax.hist(xs, bins=edges, histtype='step', linestyle=linestyles.get(g, '--'),
                     color=colors.get(g, 'black'), lw=1.6, label=f'{g}  n={len(xs)}')
         else:
             ax.hist(xs, bins=edges, color=colors.get(g), alpha=0.65,
@@ -363,11 +367,11 @@ def zmad_type_hist(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
     for k, v in (-funnel.diff().dropna()).items():
         if v:
             notes.append(f'  -{int(v)} failed: {k}')
-    if len(lost):
-        notes.append('unmatched labels: ' + ', '.join(
-            f'{k} x{v}' for k, v in lost.items()))
-    ax.annotate('\n'.join(notes), (0.02, 0.02), xycoords='axes fraction',
-                fontsize=7.5, color='firebrick', va='bottom')
+    # if len(lost):
+    #     notes.append('unmatched labels: ' + ', '.join(
+    #         f'{k} x{v}' for k, v in lost.items()))
+    # ax.annotate('\n'.join(notes), (0.02, 0.02), xycoords='axes fraction',
+    #             fontsize=7.5, color='firebrick', va='bottom')
     print('\n'.join(notes))
     if len(fails):
         print('reasons for not-ok rows:\n' + fails.to_string())
@@ -439,6 +443,7 @@ def _main():
         description='Plot ZMAD results. Population panels need only the parquet; '
                     'per-source figures re-run zmad_metric on the chosen files.')
     p.add_argument('parquet', help='output of run_zmad.py')
+    p.add_argument('--band', help='filter 1 band from parquet')
     p.add_argument('--aperture', default=None)
     p.add_argument('--prefix', default='', help="e.g. 'zmad_' for bat_master.parquet")
     p.add_argument('--types', metavar='COL',
@@ -455,7 +460,22 @@ def _main():
 
     plt.switch_backend('Agg')
     d = pd.read_parquet(os.path.expanduser(args.parquet))
+    # d = df[df['band']==args.band]
     outdir = os.path.expanduser(args.outdir)
+
+    band = args.band[1:] if args.band and args.band.startswith('z') else args.band
+    tag_b = f'_{band}' if band else ''
+    if band:
+        col = f'{args.prefix}band' if f'{args.prefix}band' in d else 'band'
+        if col not in d:
+            raise KeyError(f'--band given but no {col!r} column; '
+                           f'columns are {list(d.columns)[:12]}...')
+        n0 = len(d)
+        d = d[d[col] == band]
+        if d.empty:
+            raise ValueError(f'no rows with {col}={band!r}; '
+                             f'present: {sorted(pd.read_parquet(os.path.expanduser(args.parquet))[col].dropna().unique())}')
+        print(f'band {band}: {len(d)} of {n0} rows')
 
     if args.census:
         zmad_census(d, type_col=args.types or 'clasf', prefix=args.prefix)
