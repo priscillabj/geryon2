@@ -42,6 +42,7 @@ import re
 import sys
 import traceback
 from pathlib import Path
+import time
 
 import matplotlib
 matplotlib.use("Agg")
@@ -429,6 +430,7 @@ def main():
 
     comm = MPI.COMM_WORLD
     rank, size = comm.Get_rank(), comm.Get_size()
+    job_start = time.time()
 
     if rank == 0:
         os.makedirs(args.outdir, exist_ok=True)
@@ -442,14 +444,21 @@ def main():
 
     for i in range(rank, len(files), size):     # round-robin, no collectives
         f = files[i]
+        t0 = time.time()
         try:
             status = process(f, args, master)
-            print(f"[rank {rank}] {i} {os.path.basename(f)} {status}", flush=True)
+            print(f"[rank {rank}] {i} {os.path.basename(f)} {status} "
+                  f"in {time.time()-t0:.1f}s", flush=True)
         except Exception:
             print(f"[rank {rank}] {i} {os.path.basename(f)} FAILED\n"
                   f"{traceback.format_exc()}", file=sys.stderr, flush=True)
 
-    print(f"[rank {rank}] done", flush=True)
+    total = time.time() - job_start
+    hours, rem = divmod(total, 3600)
+    mins, secs = divmod(rem, 60)
+    print(f"[rank {rank}] done. "
+          f"walltime: {int(hours):02d}h {int(mins):02d}m {secs:04.1f}s"
+          , flush=True)
 
 
 if __name__ == "__main__":

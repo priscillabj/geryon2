@@ -1531,7 +1531,7 @@ def SF_linmix(old_dict, verbose=False, amp_at=365,
     return old_dict
 
 import emcee
-import corner
+# import corner
 from scipy.optimize import curve_fit
 
 # Define the broken power law model
