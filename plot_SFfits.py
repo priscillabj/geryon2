@@ -30,6 +30,8 @@ import sys
 import glob
 import shutil
 import pickle
+import json
+import argparse
 from newSF import plot_SF          # newSF sets matplotlib Agg on import
 
 X = 10
@@ -54,6 +56,14 @@ def _unwrap(d):
     if isinstance(d, list):
         return d[0]
     return d
+
+def _model_of(p):
+    b = os.path.basename(p)
+    if re.search(r"_bpl_\w+fit\.pkl$", b):
+        return "bpl"
+    if b.endswith("_linmixfit.pkl"):
+        return "spl"
+    return None
 
 
 def _make_dict(fit_pkl, model_key):
@@ -83,32 +93,62 @@ def plot_one(fit_pkl, model_key, plotsf_model):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("-")]
-    if not args:
-        sys.exit("usage: python plot_fit.py <spl|bpl> [RA_pattern] [band]")
+    p = argparse.ArgumentParser(
+        description="plot SF data + fitted model for spl (linmix) or bpl fits")
+    p.add_argument("model", nargs="?",
+                   help="spl | bpl (aliases: linmix, single, broken)")
+    p.add_argument("rest", nargs="*",
+                   help="[RA_pattern] [band] — order-independent")
+    p.add_argument("--p-list", metavar="FILE",
+                   help="JSON array of fit pkl paths ('-' for stdin); "
+                        "mutually exclusive with model/RA_pattern/band")
+    p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--offset", type=int, default=0)
+    args = p.parse_args()
 
-    model_key = ALIASES.get(args[0].lower(), args[0].lower())
-    if model_key not in SPEC:
-        sys.exit(f"model must be one of {sorted(set(SPEC) | set(ALIASES))}, got {args[0]!r}")
+    if args.p_list and args.model:
+        p.error("--p-list takes no positional args")
+    if not args.p_list and not args.model:
+        p.error("give <model> [RA_pattern] [band], or --pkl-list FILE")
 
-    rest    = args[1:]
-    band    = next((a for a in rest if a in ("g", "r", "i")), None)   # single-letter token
-    pattern = next((a for a in rest if a not in ("g", "r", "i")), "")  # the rest is the RA/path
+    if args.p_list:
+        stream = sys.stdin if args.p_list == "-" else open(args.p_list)
+        jobs = []
+        for f in dict.fromkeys(json.load(stream)):
+            mk = _model_of(f)
+            if mk is None:
+                print(f"  [skip] {os.path.basename(f)}: not a recognized fit pkl")
+            else:
+                jobs.append((f, mk))
+        print(f"{len(jobs)} fits from {args.p_list}")
 
-    fit_glob, plotsf_model = SPEC[model_key]
-    FIT_GLOB = os.environ["HOME"] + f"/results/partials/*/{fit_glob}"
+    else:
+        model_key = ALIASES.get(args.model.lower(), args.model.lower())
+        if model_key not in SPEC:
+            p.error(f"model must be one of {sorted(set(SPEC) | set(ALIASES))}, "
+                    f"got {args.model!r}")
 
-    def _match(f):
-        base = os.path.basename(f)
-        return pattern in f and (band is None or re.search(rf"z{band}_", base))
+        band    = next((a for a in args.rest if a in ("g", "r", "i")), None)
+        pattern = next((a for a in args.rest if a not in ("g", "r", "i")), "")
+        FIT_GLOB = os.environ["HOME"] + f"/results/partials/*/{SPEC[model_key][0]}"
 
-    fits = sorted(f for f in glob.glob(FIT_GLOB) if _match(f))
-    print(f"{len(fits)} {model_key} fits found"
-          + (f" matching '{pattern}'" if pattern else "")
-          + (f" band z{band}" if band else ""))
-    for f in fits:
+        def _match(f):
+            base = os.path.basename(f)
+            return pattern in f and (band is None or re.search(rf"z{band}_", base))
+
+        fits = sorted(f for f in glob.glob(FIT_GLOB) if _match(f))
+        print(f"{len(fits)} {model_key} fits found"
+              + (f" matching '{pattern}'" if pattern else "")
+              + (f" band z{band}" if band else ""))
+        jobs = [(f, model_key) for f in fits]
+
+    if args.limit or args.offset:
+        jobs = jobs[args.offset:args.offset + args.limit if args.limit else None]
+        print(f"  -> {len(jobs)} after offset={args.offset} limit={args.limit}")
+
+    for f, mk in jobs:
         try:
-            plot_one(f, model_key, plotsf_model)
+            plot_one(f, mk, SPEC[mk][1])
         except Exception as e:
             print(f"  [skip] {os.path.basename(f)}: {e}")
 

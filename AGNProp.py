@@ -187,9 +187,11 @@ def AGNPropdf(df_varfeat, table_mbh,overwrite=False):
     # Create derived columns
     # cleaned['LogM_BH'] = cleaned['Best_M_BH'].astype(float)
     cleaned['LogM_BH'] = pd.to_numeric(cleaned['Best_M_BH'], errors='coerce')
-    cleaned['Redd']    = cleaned['Edd_rat'].astype(float)
+    # cleaned['Redd']    = cleaned['Edd_rat'].astype(float)
+    cleaned['Redd']    = pd.to_numeric(cleaned['Edd_rat'], errors='coerce')
     cleaned['LogRedd'] = np.log10(cleaned['Redd'])
-    cleaned['Lbol']    = cleaned['L_bol'].astype(float)
+    # cleaned['Lbol']    = cleaned['L_bol'].astype(float)
+    cleaned['Lbol']    = pd.to_numeric(cleaned['L_bol'], errors='coerce')
     cleaned['Ledd']    = cleaned['Lbol'] / cleaned['Redd']
     
     # Columns to merge
@@ -218,11 +220,18 @@ def AGNPropdf(df_varfeat, table_mbh,overwrite=False):
         if 'bat_index' not in diff_col:
             diff_col.append('bat_index')
 
+        # df_merged = df_varfeat.merge(
+        # mbh_subset[diff_col],
+        # on='bat_index',
+        # how='left'
+        #     )
+        mbh_subset = mbh_subset.dropna(subset=['bat_index'])
         df_merged = df_varfeat.merge(
-        mbh_subset[diff_col],
-        on='bat_index',
-        how='left'
-            )
+                    mbh_subset[diff_col],
+                    on='bat_index',
+                    how='left',
+                    validate='many_to_one',
+                    )
 
     
     else:

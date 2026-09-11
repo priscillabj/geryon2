@@ -32,10 +32,11 @@ from newSF import bpl_mcmc
 
 # ── configuration ─────────────────────────────────────────────────────────────
 X          = 10                                    # must match the optSF run
-# MODEL      = "flat"                                 # "flat" (A at dt=1) or "at_break" (A at break)
-MODEL      = "at_break"                                 # "flat" (A at dt=1) or "at_break" (A at break)
+MODEL      = "flat"                                 # "flat" (A at dt=1) or "at_break" (A at break)
+# MODEL      = ""                                 # "flat" (A at dt=1) or "at_break" (A at break)
+# MODEL      = "at_break"                                 # "flat" (A at dt=1) or "at_break" (A at break)
 INPUT_GLOB = os.environ["HOME"] + f"/results/partials/*/*_{X}cs.pkl"
-FIT_SUFFIX = f"_bpl_{MODEL}fit.pkl"                 # output: <input stem> + this (model in name)
+FIT_SUFFIX = f"{MODEL}_bplfit.pkl"                 # output: <input stem> + this (model in name)
 TIMEOUT_S  = 300
 MTIME_DAY  = None                                   # None = no date filter;
 # MTIME_DAY  = "2026-08-19"                                   # None = no date filter;
@@ -76,8 +77,8 @@ def allowed_pkl_names():
     """basenames of the _{X}cs.pkl outputs whose parent parquet is in FILE_LIST.
     optSF names each output '<parquet_basename>_{X}cs.pkl', so the parent list
     maps 1:1 onto expected pkl basenames."""
-    # parents = json.loads(Path(FILE_LIST).read_text())
-    parents = json.loads(FILE_LIST.read_text())
+    parents = json.loads(Path(FILE_LIST).read_text())
+    # parents = json.loads(FILE_LIST.read_text())
     return {f"{os.path.basename(p)}_{X}cs.pkl" for p in parents}
 
 
@@ -103,7 +104,7 @@ def build_file_list():
         all_files = [f for f in all_files if os.path.getmtime(f) >= cutoff]
         print(f"[master] mtime >= {MTIME_DAY}: {len(all_files)} files match", flush=True)
 
-    todo = [f for f in all_files if not os.path.exists(out_name(f))]
+    todo = [f for f in all_files ]#if not os.path.exists(out_name(f))]
     print(f"[master] {len(all_files)} SF pkl files found, "
           f"{len(all_files) - len(todo)} already fitted, {len(todo)} to do",
           flush=True)

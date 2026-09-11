@@ -59,8 +59,8 @@ def scatter(band, par, fit_model, CL=False):
             kw.update(markerfacecolor="none", ecolor="k")
         ax.errorbar(agn[f"gamma_{fit_model}"], agn[f"A_365_{fit_model}"], **kw)
     if CL:
-        # cl = sub[pd.to_numeric(sub["bat_index"], errors="coerce").isin(CL_MT + CL_LIT)]
-        cl1 = sub[pd.to_numeric(sub["bat_index"], errors="coerce").isin(CL_MT)]
+        cl1 = sub[pd.to_numeric(sub["bat_index"], errors="coerce").isin(CL_MT + CL_LIT)]
+        # cl1 = sub[pd.to_numeric(sub["bat_index"], errors="coerce").isin(CL_MT)]
         # cl2 = sub[pd.to_numeric(sub["bat_index"], errors="coerce").isin(OUR_CAND)]
         # print(f"  CL overlay: {len(cl)} rows from {len(CL_MT + CL_LIT)} indices")
         print(f"  CL overlay: {len(cl1)} rows from {len(CL_MT)} indices")

@@ -1,12 +1,14 @@
 """
-run_optSF.py
+runSF.py
 run optSF(more efficient and modular version
 with filename as input parameter) in parallel 
 in parquet files LCs
 
 Usage on the cluster:
-    mpirun -n <nranks> python run_optSF.py # merged (default)
-    mpirun -n 64 python run_optSF.py --list ~/results/input_files.json  # unmerged
+    mpirun -n <nranks> python runSF.py                                # all parquets
+    mpirun -n 64 python runSF.py --list ~/results/input_files.json    # subsample
+    mpirun -n 1  python runSF.py --file 0.20323_-7.15322_zg_merged.parquet
+    mpirun -n 64 python runSF.py --force                              # overwrite existing
 
 Requirements:
     mpi4py, numpy, pandas, scipy, linmix, astropy, matplotlib
@@ -35,7 +37,8 @@ from pathlib import Path
 # INPUT_GLOB = os.environ["HOME"] + "/BAT_results/*z[gri]_merged.parquet"
 # INPUT_GLOB = os.environ["HOME"] + "/BAT_results/139.80500_+55.46528_zg_merged.parquet"
 
-CUTOFF = time.mktime(time.strptime("2026-08-17", "%Y-%m-%d"))  # rerun anything older
+# CUTOFF = time.mktime(time.strptime("2026-08-17", "%Y-%m-%d"))  # rerun anything older
+CUTOFF = None
 DATA_DIR = Path(os.environ["HOME"]) / "BAT_results"
 OUTPUT_ROOT = os.path.join(os.environ["HOME"], "results", "partials")
 
@@ -43,9 +46,9 @@ OUTPUT_ROOT = os.path.join(os.environ["HOME"], "results", "partials")
 N_SOURCES = None
 OPTsf_KWARGS = dict(
     save        = True,
-    # clip        = True,
-    # showallcs   = True,
-    # save_plt    = True,
+    clip        = True,
+    showallcs   = True,
+    save_plt    = True,
     sigma_filter= True,
     x           = 10,
     # plot_sigma  = True
@@ -93,55 +96,75 @@ def output_exists(f):
         os.remove(p)
         return False
 
+def build_file_list(args):
+    """Resolve the CLI options into a list of absolute parquet paths."""
+    if args.file:
+        p = Path(args.file)
+        if not p.exists():
+            p = DATA_DIR / p                       # bare basename
+        if not p.exists():
+            raise FileNotFoundError(args.file)
+        return [str(p)]
+
+    if args.list:
+        list_path = Path(args.list)
+        suffix = list_path.suffix.lower()
+
+        if suffix == ".txt":
+            names = [l.strip() for l in list_path.read_text().splitlines() if l.strip()]
+        elif suffix == ".json":
+            names = json.loads(list_path.read_text())
+        elif suffix == ".jsonl":
+            names = [json.loads(l)["file"] for l in list_path.read_text().splitlines() if l.strip()]
+        # elif suffix == ".csv":
+        #     df = pd.read_csv(list_path)
+        #     col = "file" if "file" in df.columns else "lc_file"
+        #     names = df[col].tolist()
+        # elif suffix == ".parquet":
+        #     df = pd.read_parquet(list_path)
+        #     col = "file" if "file" in df.columns else "lc_file"
+        #     names = df[col].tolist()
+        else:
+            raise ValueError(f"Unsupported --list extension: {suffix}")
+
+        return [str(DATA_DIR / p) for p in names][:N_SOURCES]
+
+    return sorted(glob.glob(str(DATA_DIR / "*.parquet")))[:N_SOURCES]
+
+
 def main():
     if rank == 0:
         job_start = time.time()
         parser = argparse.ArgumentParser()
-        parser.add_argument("--list", help='subsample: .txt (one per line), .json, .jsonl, '
+        src = parser.add_mutually_exclusive_group()
+        src.add_argument("--file", help="single parquet: basename (resolved against "
+                                        "DATA_DIR) or a full path")
+        src.add_argument("--list", help='subsample: .txt (one per line), .json, .jsonl, '
                                   '.csv or .parquet with a file/lc_file column')
+        parser.add_argument("--force", action="store_true",
+                            help="reprocess and overwrite existing pkl")
         args = parser.parse_args()
 
-        if args.list:
-            list_path = Path(args.list)
-            suffix = list_path.suffix.lower()
+        all_files = build_file_list(args)
+        force = args.force
 
-            if suffix == ".txt":
-                names = [l.strip() for l in list_path.read_text().splitlines() if l.strip()]
-            elif suffix == ".json":
-                names = json.loads(list_path.read_text())
-            elif suffix == ".jsonl":
-                names = [json.loads(l)["file"] for l in list_path.read_text().splitlines() if l.strip()]
-            # elif suffix == ".csv":
-            #     df = pd.read_csv(list_path)
-            #     col = "file" if "file" in df.columns else "lc_file"
-            #     names = df[col].tolist()
-            # elif suffix == ".parquet":
-            #     df = pd.read_parquet(list_path)
-            #     col = "file" if "file" in df.columns else "lc_file"
-            #     names = df[col].tolist()
-            else:
-                raise ValueError(f"Unsupported --list extension: {suffix}")
-
-            all_files = [str(DATA_DIR / p) for p in names][:N_SOURCES]
-        else:
-            INPUT_GLOB = str(DATA_DIR / "*.parquet")
-            all_files = sorted(glob.glob(INPUT_GLOB))[:N_SOURCES]
-
-        print(f"[rank 0] {len(all_files)} files to process across {nrank} ranks",
-              flush=True)
+        print(f"[rank 0] {len(all_files)} files to process across {nrank} ranks"
+              f"{' (--force: overwriting)' if force else ''}", flush=True)
     else:
         all_files = None
         job_start = None
+        force = None
 
     all_files = comm.bcast(all_files, root=0)
     job_start = comm.bcast(job_start, root=0)
+    force     = comm.bcast(force, root=0)
 
     # round-robin distribution — rank r processes files r, r+nrank, r+2*nrank, ...
     my_files = all_files[rank::nrank]
     print(f"[rank {rank}] assigned {len(my_files)} files", flush=True)
 
     for f in my_files:
-        if output_exists(f):
+        if not force and output_exists(f):
             print(f"[rank {rank}] skip (exists) — {f}", flush=True)
             continue
         t0 = time.time()

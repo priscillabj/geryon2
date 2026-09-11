@@ -72,7 +72,7 @@ def err_prop(dmag, prnt=False, plot=False):
 
 def clip_block(group, mag_column):
     """Sigma-clip a group's magnitude column and return only non-clipped rows."""
-    clipped = sigma_clip(group[mag_column], sigma=2.5)
+    clipped = sigma_clip(group[mag_column], sigma=5)
     good_points = ~clipped.mask
     return group.loc[good_points]
 
@@ -952,6 +952,7 @@ def optSF(file, calstars=True, weight=False,
         'mag':       mztf,
         'band':      band
     }
+    print(SF_dict)
 
     if save:
         os.makedirs(path_file, exist_ok=True)
@@ -1286,8 +1287,7 @@ def posterior_band(chain_alpha, chain_beta, dt_data, n_samples=500):
  
 # ── 3. plotting ───────────────────────────────────────────────────────────────
  
-def plot_linmix(dt_data, sf_mag, sf_err, dt_lenbin,
-                log_dt, log_sf, xerr, yerr,
+def plot_linmix(log_dt, log_sf, xerr, yerr,
                 chain_alpha, chain_beta,
                 alpha_med, beta_med,
                 dt_fit_range, sf_fit_p16, sf_fit_med, sf_fit_p84,
@@ -1513,8 +1513,7 @@ def SF_linmix(old_dict, verbose=False, amp_at=365,
         dt_fit_range, sf_p16, sf_p50, sf_p84 = posterior_band(
             chain_alpha, chain_beta, dt_data)
         ra = old_dict.get('RA', 'simulatedLC')
-        plot_linmix(dt_data, sf_mag, sf_err, dt_lenbin,
-                    log_dt, log_sf, xerr, yerr,
+        plot_linmix(log_dt, log_sf, xerr, yerr,
                     chain_alpha, chain_beta,
                     alpha_med, beta_med,
                     dt_fit_range, sf_p16, sf_p50, sf_p84,
@@ -1893,7 +1892,7 @@ def plot_SF(old_dict,band, model,use_all_points=True,label=True,color_data='blue
 
     #old_dict = SF_dict[2]
     interval_index = pd.IntervalIndex(old_dict['SF'].index)
-    sf_mag_lim=old_dict['SF'][(interval_index.left >= 1)&(interval_index.right < 365)&(old_dict['SF']!=0)].dropna()
+    sf_mag_lim=old_dict['SF'][(interval_index.left >= 1)&(interval_index.right <= 365)&(old_dict['SF']!=0)].dropna()
     
     if not use_all_points:
         print(sf_mag_lim[-1:],f'excluded from fit')

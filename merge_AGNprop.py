@@ -45,13 +45,14 @@ import sf_keys                       # single source of truth for fit-key names
 PARTIALS_ROOT = Path(os.environ["HOME"]) / "results" / "partials"
 # OUT_MERGED = os.path.expanduser("~/results/SFfit_merged_zmadflux.parquet")
 OUT_MERGED = os.path.expanduser("~/results/SFfit_tmp.parquet")
-OUT_PROPS  = os.path.expanduser("~/results/bat_master_zmadflux_sigma>10.parquet")
-OUT_PNG    = os.path.expanduser("~/results/amp_vs_gamma_byclasf_sigma>10_2.png")
+# OUT_PROPS  = os.path.expanduser("~/results/bat_master_zmadflux_sigma>10.parquet")
+# OUT_PNG    = os.path.expanduser("~/results/amp_vs_gamma_byclasf_sigma>10_2.png")
+OUT_PROPS  = os.path.expanduser("~/results/bat_master_zmadflux2.parquet")
+OUT_PNG    = os.path.expanduser("~/results/amp_vs_gamma_byclasf_all2.png")
 
 # --- catalogue paths on geryon2 -------------------------------------------
 # data:      wise_ra, wise_dec, AGN ('TRUE'/'FALSE' strings), bat_index, ctpt_name
 CATALOG = os.path.expanduser("~/DR2-105monthcatalog-105m_all.csv")
-# table_mbh: SEMICOLON-delimited; has "14-150 Lum" (renamed to lx below)
 MBH     = os.path.expanduser("~/DR2_DR3_Best MBH - DR2_final_use_this.csv")
 
 # --- ZMAD -----------------------------------------------------------------
@@ -223,7 +224,7 @@ def read_catalogues():
     semicolon-delimiter and AGN-as-bool failures are otherwise invisible until
     after the pkl loop."""
     data      = pd.read_csv(CATALOG)
-    table_mbh = pd.read_csv(MBH, sep=";").rename(columns={"14-150 Lum": "lx"})
+    table_mbh = pd.read_csv(MBH, sep=",").rename(columns={"14-150 Lum": "lx"})
 
     need = ["BAT_ID", "Best_M_BH", "Edd_rat", "L_bol", "lx", "zbest", "NH", "Type_105"]
     missing = [c for c in need if c not in table_mbh.columns]
@@ -299,7 +300,9 @@ def main():
     df = AGNProp.LC2VarFeatdf(df, data)
     df = AGNProp.AGNPropdf(df, table_mbh)
     if len(df) != n0:
-        print(f"WARNING: crossmatch changed row count {n0} -> {len(df)}")
+        # print(f"WARNING: crossmatch changed row count {n0} -> {len(df)}")
+        raise SystemExit(f"crossmatch changed row count {n0} -> {len(df)}; "
+                     f"duplicate or null keys in the catalogues")
 
     # all-NaN clasf almost always = bat_index dtype mismatch (object vs int)
     print(f"rows={len(df)}  matched_bat_index={df['bat_index'].notna().sum()}  "
