@@ -71,9 +71,12 @@ SY  = ["Sy1.5"]                    # intermediate  -> C2
 TP2 = ["Sy1.8", "Sy1.9", "Sy2"]    # Type 2        -> C1
 # --------------------------------------------------------------------------
 
-FIT_TAIL = {"spl": "linmixfit", "bpl": "bplfit"}
+# FIT_TAIL = {"spl": "linmixfit", "bpl": "bplfit"}
+FIT_TAIL = {"spl": "{x}cs_linmixfit", "bpl": "{x}csflat_bplfit"}
 band_re  = re.compile(r"_z(\w)_")          # matches _zg_merged AND _zi_ccd13_
-pkl_re   = re.compile(r"_\d+cs_(linmix|bpl)fit\.pkl$")
+# pkl_re   = re.compile(r"_\d+cs_(linmix|bpl)fit\.pkl$")
+pkl_re   = re.compile(r"_(?:%s)\.pkl$" % "|".join(
+    re.escape(t).replace(r"\{x\}", r"\d+") for t in FIT_TAIL.values()))
 _STRIP   = re.compile(r"_(spl|bpl)$")
 ID       = ["lc_file", "source", "band", "merged", "sci", "RA"]
 
@@ -97,7 +100,7 @@ def extract(d, model):
 
 
 def pkl_pattern(model, x):
-    return str(PARTIALS_ROOT / "*" / f"*_z*.parquet_{x}cs_{FIT_TAIL[model]}.pkl")
+    return str(PARTIALS_ROOT / "*" / f"*_z*.parquet_{FIT_TAIL[model].format(x=x)}.pkl")
 
 
 def out_paths(args):
@@ -181,6 +184,7 @@ def load_fits(model, wanted, args):
             "merged":  lc.endswith("_merged.parquet"),
             "sci":     "_sci_" in lc,      # *_zr_sci_merged.parquet: separate reduction
             "RA":      val(d, "RA"),
+            "median_mag":      val(d, "mag"),
             f"valid_{model}": bool(d.get("valid", True)),
             f"pkl_{model}":   f,
             **extract(d, model),
@@ -328,7 +332,7 @@ def plot(df, out_png):
         raise SystemExit(f"plot columns absent: {missing}\navailable: "
                          f"{[c for c in df.columns if c.endswith(('_spl', '_bpl'))]}")
 
-    sub = df[(df["band"] == BAND) & (df["merged"] == True) &
+    sub = df[(df["band"] == BAND) & (df["merged"] == True) & (df["sci"] == False) &
              (df[f"valid_{MODEL}"] == True) &
              np.isfinite(df[gcol]) & np.isfinite(df[ycol])]
     print(f"plotting {MODEL} band z{BAND} (merged only): {len(sub)} sources")

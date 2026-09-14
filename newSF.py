@@ -1371,7 +1371,9 @@ def plot_linmix(log_dt, log_sf, xerr, yerr,
  
 # ── 4. main function ──────────────────────────────────────────────────────────
  
-def SF_linmix(old_dict, verbose=False, amp_at=365,
+# def SF_linmix(old_dict, verbose=False, amp_at=365,
+            #   plot=False, save_plot=False, save_pkl=False,path=None):
+def SF_linmix(old_dict, verbose=False, amp_at=365, reject_z=None,
               plot=False, save_plot=False, save_pkl=False,path=None):
     """LinMix MCMC power-law fit to the structure function in log-log space.
  
@@ -1402,6 +1404,26 @@ def SF_linmix(old_dict, verbose=False, amp_at=365,
     if len(sf_mag) <= 3:
         print(f'too few data points to fit: {len(sf_mag)} — SKIPPING')
         return None
+    
+    # old_dict['reject_z'] = reject_z
+    # old_dict['n_rejected'] = 0
+    if reject_z is not None:
+        _dt = np.asarray(pd.IntervalIndex(sf_mag.index).mid, float)
+        _y  = np.log10(sf_mag.values)
+        _x  = np.log10(_dt)
+        i, j = np.triu_indices(len(_x), k=1)
+        _m = np.median((_y[j] - _y[i]) / (_x[j] - _x[i]))
+        _r = _y - (_m * _x + np.median(_y - _m * _x))
+        _s = max(np.median(np.abs(_r - np.median(_r))) * 1.4826, 0.005)
+        keep = np.abs(_r / _s) <= reject_z
+        if not keep.all():
+            old_dict['rejected_dt'] = _dt[~keep].tolist()
+            old_dict['rejected_z']  = (_r / _s)[~keep].tolist()
+            old_dict['n_rejected']  = int((~keep).sum())
+            sf_mag = sf_mag[keep]
+            if len(sf_mag) <= 3:
+                print(f'too few points after rejection: {len(sf_mag)} — SKIPPING')
+                return None
  
     dt_lenbin = sf_mag.index.categories[sf_mag.index.codes].length / 2
     dt_data   = sf_mag.index.categories[sf_mag.index.codes].mid
