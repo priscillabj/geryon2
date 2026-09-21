@@ -87,7 +87,8 @@ def scatter(PROPS, band, par, fit_model, CL=False):
     fig.tight_layout(); fig.savefig(out, dpi=150)
     print("wrote", out)
 
-def posterior(PROPS, band, which, fit_model):
+# def posterior(PROPS, band, which, fit_model):
+def posterior(PROPS, band, which, fit_model, overlay=None):
     sub = load(PROPS ,band, fit_model)
     color = BAND_COLOR[band]
     BINW = 0.05
@@ -98,13 +99,26 @@ def posterior(PROPS, band, which, fit_model):
     bins = np.arange(lo, hi + BINW / 2, BINW)
     print(f"{which} posterior z{band}: {len(sub)} sources")
     fig, ax = plt.subplots(figsize=(6, 4))
-    ax.hist(sub[col], bins=bins, alpha=0.7, color=color, edgecolor="black")
+    # ax.hist(sub[col], bins=bins, alpha=0.7, color=color, edgecolor="black")
+    ax.hist(sub[col], bins=bins, alpha=0.7, edgecolor=color,
+            histtype="step", linewidth=1.8,
+            label=f"all (n={len(sub)})")
+    tag = ""
+    if overlay:
+        osub = load(overlay, band, fit_model)
+        frac = 100 * len(osub) / len(sub)
+        print(f"  overlay: {len(osub)} sources")
+        ax.hist(osub[col], bins=bins, histtype="step", linewidth=2.7,
+                edgecolor="#B89CFF", linestyle="--",label=f"variable subsample (n={len(osub)}, {frac:.0f}%))")
+        tag = "_ovl"
+    ax.legend(fontsize=9)
     ax.set_xlabel(xlabel, fontsize=12)
     ax.set_ylabel("Frequency", fontsize=12)
     ax.set_xlim(*xlim)
     ax.grid(True, alpha=0.3)
     ax.set_title(f"z{band}")
-    out = os.path.join(RESULTS, f"{band}band_{which}_distribution_{fit_model}.png")
+    # out = os.path.join(RESULTS, f"{band}band_{which}_distribution_{fit_model}.png")
+    out = os.path.join(RESULTS, f"{band}band_{which}_distribution_{fit_model}{tag}.png")
     fig.tight_layout(); fig.savefig(out, dpi=150)
     print("wrote", out)
 
@@ -112,6 +126,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--master", default=os.path.expanduser("~/results/bat_master_zmadflux2.parquet"))
+    p.add_argument("--overlay", help="second parquet drawn as outlined bars over --master")
     p.add_argument("--band", default="g", choices=["g", "r", "i"])
     p.add_argument("--par", default="clasf", help="clasf column to group the scatter by")
     p.add_argument("--fit_model", default="spl", choices=["spl", "bpl"])
@@ -124,7 +139,8 @@ if __name__ == "__main__":
     a = p.parse_args()
 
     if a.hist:
-        posterior(a.master, a.band, a.hist, a.fit_model)
+        # posterior(a.master, a.band, a.hist, a.fit_model)
+        posterior(a.master, a.band, a.hist, a.fit_model, overlay=a.overlay)
     # elif a.amp:
     #     posterior(a.band, "amp", a.fit_model)
     else:

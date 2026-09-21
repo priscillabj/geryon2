@@ -47,7 +47,7 @@ PARTIALS_ROOT = Path(os.environ["HOME"]) / "results" / "partials"
 OUT_MERGED = os.path.expanduser("~/results/SFfit_tmp.parquet")
 # OUT_PROPS  = os.path.expanduser("~/results/bat_master_zmadflux_sigma>10.parquet")
 # OUT_PNG    = os.path.expanduser("~/results/amp_vs_gamma_byclasf_sigma>10_2.png")
-OUT_PROPS  = os.path.expanduser("~/results/bat_master_zmadflux2.parquet")
+OUT_PROPS  = os.path.expanduser("~/results/bat_master.parquet")
 OUT_PNG    = os.path.expanduser("~/results/amp_vs_gamma_byclasf_all2.png")
 
 # --- catalogue paths on geryon2 -------------------------------------------
@@ -78,7 +78,7 @@ band_re  = re.compile(r"_z(\w)_")          # matches _zg_merged AND _zi_ccd13_
 pkl_re   = re.compile(r"_(?:%s)\.pkl$" % "|".join(
     re.escape(t).replace(r"\{x\}", r"\d+") for t in FIT_TAIL.values()))
 _STRIP   = re.compile(r"_(spl|bpl)$")
-ID       = ["lc_file", "source", "band", "merged", "sci", "RA"]
+ID       = ["lc_file", "source", "band", "merged", "sci", "RA", "med_mag"]
 
 
 def val(d, name):
@@ -184,7 +184,8 @@ def load_fits(model, wanted, args):
             "merged":  lc.endswith("_merged.parquet"),
             "sci":     "_sci_" in lc,      # *_zr_sci_merged.parquet: separate reduction
             "RA":      val(d, "RA"),
-            "median_mag":      val(d, "mag"),
+            "med_mag": val(d, "mag"),
+            # "epochs":  val(d, "epochs"),
             f"valid_{model}": bool(d.get("valid", True)),
             f"pkl_{model}":   f,
             **extract(d, model),

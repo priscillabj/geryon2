@@ -496,6 +496,7 @@ def compute_target_stats(grouped_corr):
     ndmag       : Series — count per bin
     """
     g_corr      = grouped_corr['dmag']
+    print(g_corr.apply(list))
     n_corr      = g_corr.count()
     sqrt_n      = np.sqrt(n_corr.clip(lower=1))
     cp16        = g_corr.quantile(0.16)
@@ -544,6 +545,14 @@ def compute_calstar_sf(cs, mag_column, mag_err, log_bins):
     df_cs['sq_dmag_cs'] = df_cs['dmag'] ** 2
 
     grouped_cs = df_cs.groupby(['object_index', 'log_bin'], observed=True)
+    # print(grouped_cs['dmag'].apply(list))
+    # print(grouped_cs['sq_dmag_cs'].apply(list))
+    
+    s = grouped_cs['dmag'].apply(list)
+    cats = s.index.get_level_values('log_bin').categories      # IntervalIndex
+    b = cats[cats.contains(1.4)][0]                            # the bin containing 1.4
+    sub = s.xs(b, level='log_bin')
+    print(sub)                                            # the object_index values
 
     # pass 1: mean sq_dmag → median across stars
     mean_sq        = grouped_cs['sq_dmag_cs'].mean()
@@ -560,6 +569,7 @@ def compute_calstar_sf(cs, mag_column, mag_err, log_bins):
 
     # pass 2: err_prop on raw |dmag| per bin
     g_dmag_bin = df_cs.groupby('log_bin', observed=True)['dmag']
+    print(g_dmag_bin.apply(list).iloc[3])
     n_cs_bin   = g_dmag_bin.count()
     sqrt_n_cs  = np.sqrt(n_cs_bin.clip(lower=1))
     dp16 = g_dmag_bin.quantile(0.16)
@@ -862,6 +872,11 @@ def optSF(file, calstars=True, weight=False,
     # ── target SF pairs and stats ─────────────────────────────────────────
     corr_sf, grouped_corr = compute_sf_pairs(ztf, mag_column, mag_err, log_bins)
     binned_corr, minerr_corr, maxerr_corr, ndmag = compute_target_stats(grouped_corr)
+    
+    from trace_SFpairs import trace_bin, sparse_bins
+    print(sparse_bins(corr_sf, max_n=3))
+    print(trace_bin(ztf, corr_sf, '(1.256, 1.581]', mag_column, mag_err).to_string(index=False))
+    
     print(f'    +{np.round(time.perf_counter() - tic, 2)} s: source errors estimate')
 
     # ── calstar SF pairs and stats ────────────────────────────────────────
@@ -950,7 +965,8 @@ def optSF(file, calstars=True, weight=False,
         '#elements': ndmag,
         'RA':        ra,
         'mag':       mztf,
-        'band':      band
+        'band':      band,
+        'epochs':    len(ztf)
     }
     print(SF_dict)
 
@@ -1397,7 +1413,8 @@ def SF_linmix(old_dict, verbose=False, amp_at=365, reject_z=None,
     window_mask    = (
         (interval_index.left  >= 1)   &
         (interval_index.right <= 365) &
-        (old_dict['SF'] != 0)
+        (old_dict['SF'] != 0)         &
+        (old_dict['#elements'] >= 3)
     )
     sf_mag = old_dict['SF'][window_mask].dropna()
  
@@ -1626,7 +1643,10 @@ def bpl_mcmc(old_dict, initial_guess=[0.5, 0.5, 100], model_check=False,
     model_func = BPL_MODELS[model]
 
     interval_index = pd.IntervalIndex(old_dict['SF'].index)
-    sf_mag = old_dict['SF'][(interval_index.left >= 1) & (interval_index.right <= 365) & (old_dict['SF'] != 0)].dropna()
+    sf_mag = old_dict['SF'][(interval_index.left >= 1) & 
+                            (interval_index.right <= 365) & 
+                            (old_dict['SF'] != 0) & 
+                            (old_dict['#elements'] >= 3)].dropna()
     dt = sf_mag.index.categories[sf_mag.index.codes].mid
     dt_lenbin = sf_mag.index.categories[sf_mag.index.codes].length / 2
     maxerr_sf2 = old_dict['SFmaxerr'][old_dict['SFmaxerr'].index.isin(sf_mag.index)]

@@ -235,7 +235,6 @@ TYPE_GROUPS = {
 }
 GROUP_COLOR = {'Type 1 (Sy1-1.2)': 'black', 'Sy1.5': '#E69F00',
                'Type 2 (Sy1.8-1.9-2)': '#56B4E9'}
-
 # linestyle for groups drawn as unfilled steps (see `outline`)
 GROUP_STYLE = {'Type 1 (Sy1-1.2)': '--', 'Type 2 (Sy1.8-1.9-2)': '-'}
 
@@ -298,8 +297,9 @@ def _typed(d, type_col, sigma_col, ok_col):
 
 
 def zmad_type_hist(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
-                   cut=10.0, log=True, groups=None, colors=None,linestyles=None,
-                   outline=('Type 1 (Sy1-1.2)','Type 2 (Sy1.8-1.9-2)'), bins=20, figsize=(7, 5),
+                   cut=10.0, log=True, groups=None, colors=None,
+                   outline=('Type 1 (Sy1-1.2)', 'Type 2 (Sy1.8-1.9-2)'),
+                   linestyles=None, lw=1.8, bins=20, figsize=(7, 5),
                    ax=None, save=None, dpi=150):
     """Sigma distribution by coarse AGN type, with an optional cut line.
 
@@ -314,9 +314,9 @@ def zmad_type_hist(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
     ok_col = ok_col or f'{prefix}ok'
     groups = groups or TYPE_GROUPS
     colors = {**GROUP_COLOR, **(colors or {})}
+    linestyles = {**GROUP_STYLE, **(linestyles or {})}
     d_in = d
     d = _typed(d, type_col, sigma_col, ok_col)
-    linestyles = {**GROUP_STYLE, **(linestyles or {})}
 
     lut = {t: g for g, members in groups.items() for t in members}
     d = d.assign(_grp=d[type_col].map(lut))
@@ -345,8 +345,10 @@ def zmad_type_hist(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
         if xs.empty:
             continue
         if g in outline:
-            ax.hist(xs, bins=edges, histtype='step', linestyle=linestyles.get(g, '--'),
-                    color=colors.get(g, 'black'), lw=1.6, label=f'{g}  n={len(xs)}')
+            ax.hist(xs, bins=edges, histtype='step',
+                    linestyle=linestyles.get(g, '--'),
+                    color=colors.get(g, 'black'), lw=lw,
+                    label=f'{g}  n={len(xs)}')
         else:
             ax.hist(xs, bins=edges, color=colors.get(g), alpha=0.65,
                     edgecolor='black', lw=0.4, label=f'{g}  n={len(xs)}')
@@ -367,9 +369,9 @@ def zmad_type_hist(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
     for k, v in (-funnel.diff().dropna()).items():
         if v:
             notes.append(f'  -{int(v)} failed: {k}')
-    # if len(lost):
-    #     notes.append('unmatched labels: ' + ', '.join(
-    #         f'{k} x{v}' for k, v in lost.items()))
+    if len(lost):
+        notes.append('unmatched labels: ' + ', '.join(
+            f'{k} x{v}' for k, v in lost.items()))
     # ax.annotate('\n'.join(notes), (0.02, 0.02), xycoords='axes fraction',
     #             fontsize=7.5, color='firebrick', va='bottom')
     print('\n'.join(notes))
@@ -380,16 +382,32 @@ def zmad_type_hist(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
     return fig, ax
 
 
+def _annot(kind, n, denom, pct):
+    """Bar label: 'pct' -> 41%, 'n' -> n=215, 'both' -> 41% (88/215), None -> nothing."""
+    if kind == 'pct':
+        return f'{pct:.0f}%'
+    if kind == 'n':
+        return f'n={denom}'
+    if kind == 'both':
+        return f'{pct:.0f}%\n({n}/{denom})'
+    return None
+
+
 def zmad_type_fraction(d, type_col='type', prefix='', sigma_col=None, ok_col=None,
                        cut=10.0, groups=None, mode='composition', colors=None,
-                       figsize=(7, 5), ax=None, save=None, dpi=150):
+                       annot='pct', figsize=(7, 5), ax=None, save=None, dpi=150):
     """Type make-up of the sources passing the cut, stacked by fine type.
 
     mode='composition' : each bar is a share of the above-cut sample; bars sum
                          to 100%.  This is the published figure.
-    mode='rate'        : each bar is the fraction of that group's own sources
-                         that pass the cut.  Bars do not sum to 100% and this
-                         is the quantity that actually says which types vary.
+    mode='rate'        : each group's own sample is 100%; the stacked segments
+                         split that group rate by fine type, and n= is the group
+                         denominator.
+    mode='type_rate'   : one unstacked bar per fine type, each as a fraction of
+                         that type's OWN sample.  Answers 'what fraction of
+                         Sy1.9 vary', which 'rate' does not.
+
+    annot : bar label for the rate modes -- 'pct' (default), 'n', 'both', None.
     """
     sigma_col = sigma_col or f'{prefix}sigma'
     ok_col = ok_col or f'{prefix}ok'
@@ -401,27 +419,57 @@ def zmad_type_fraction(d, type_col='type', prefix='', sigma_col=None, ok_col=Non
     fig = ax.figure if ax is not None else plt.figure(figsize=figsize)
     ax = ax or fig.add_subplot(111)
 
-    for i, (label, members) in enumerate(groups.items()):
-        denom = len(above) if mode == 'composition' else \
-            len(d[d[type_col].isin(members)])
-        bottom = 0.0
-        for t in members:
-            n = int((above[type_col] == t).sum())
-            if not n or not denom:
+    seen = set()
+    if mode == 'type_rate':
+        # one bar per fine type, each against its OWN sample size.  Independent
+        # rates, so they must not be stacked: two types at 20% would otherwise
+        # read as 40%.
+        for i, (label, members) in enumerate(groups.items()):
+            present = [t for t in members if (d[type_col] == t).any()]
+            if not present:
                 continue
-            h = 100.0 * n / denom
-            ax.bar(i, h, bottom=bottom, width=0.72, color=colors.get(t),
-                   edgecolor='black', linestyle='--' if t == 'Sy1' else '-',
-                   hatch=TYPE_HATCH.get(t, ''), label=t if i == 0 or t not in
-                   [m for g in list(groups.values())[:i] for m in g] else None)
-            bottom += h
-        if mode == 'rate' and denom:
-            ax.annotate(f'n={denom}', (i, bottom), ha='center', va='bottom',
-                        fontsize=8, color='dimgray')
+            w = 0.76 / len(present)
+            for j, t in enumerate(present):
+                denom = int((d[type_col] == t).sum())
+                n = int((above[type_col] == t).sum())
+                h = 100.0 * n / denom
+                x = i - 0.38 + w * (j + 0.5)
+                ax.bar(x, h, width=w * 0.88, color=colors.get(t),
+                       edgecolor='black', hatch=TYPE_HATCH.get(t, ''),
+                       label=None if t in seen else t)
+                seen.add(t)
+                lab = _annot(annot, n, denom, h)
+                if lab:
+                    ax.annotate(lab, (x, h), ha='center', va='bottom',
+                                fontsize=7.5, color='dimgray')
+    else:
+        for i, (label, members) in enumerate(groups.items()):
+            denom = len(above) if mode == 'composition' else \
+                len(d[d[type_col].isin(members)])
+            bottom = 0.0
+            for t in members:
+                n = int((above[type_col] == t).sum())
+                if not n or not denom:
+                    continue
+                h = 100.0 * n / denom
+                ax.bar(i, h, bottom=bottom, width=0.72, color=colors.get(t),
+                       edgecolor='black', linestyle='--' if t == 'Sy1' else '-',
+                       hatch=TYPE_HATCH.get(t, ''),
+                       label=None if t in seen else t)
+                seen.add(t)
+                bottom += h
+            if mode == 'rate' and denom:
+                lab = _annot(annot, int(round(bottom * denom / 100)), denom, bottom)
+                if lab:
+                    ax.annotate(lab, (i, bottom), ha='center', va='bottom',
+                                fontsize=8, color='dimgray')
 
     ax.set_xticks(range(len(groups)))
     ax.set_xticklabels(groups.keys())
-    ax.set_ylabel('Fraction of sources', fontsize=12)
+    ax.set_ylabel({'composition': 'Fraction of sources above cut',
+                   'rate': 'Fraction of each group above cut',
+                   'type_rate': 'Fraction of each type above cut'}[mode],
+                  fontsize=12)
     ax.yaxis.set_major_formatter(lambda y, _: f'{y:.0f}%')
     ax.set_title(f'{sigma_col} > {cut:g}  ({len(above)} sources, mode={mode})',
                  fontsize=10)
@@ -443,12 +491,24 @@ def _main():
         description='Plot ZMAD results. Population panels need only the parquet; '
                     'per-source figures re-run zmad_metric on the chosen files.')
     p.add_argument('parquet', help='output of run_zmad.py')
-    p.add_argument('--band', help='filter 1 band from parquet')
     p.add_argument('--aperture', default=None)
+    p.add_argument('--band', help="keep only this band ('g', 'r', 'i'; 'zg' also "
+                                  "accepted). A run over all bands mixes them in "
+                                  "one table and sigma is not comparable across "
+                                  "them, so a per-band figure is usually what you "
+                                  "want. The band is appended to output filenames.")
     p.add_argument('--prefix', default='', help="e.g. 'zmad_' for bat_master.parquet")
     p.add_argument('--types', metavar='COL',
                    help='class column (e.g. clasf) -> also write the type figures')
     p.add_argument('--cut', type=float, default=10.0, help='sigma cut for the type figures')
+    p.add_argument('--only', metavar='LABEL',
+                   help='restrict the type histogram to the group whose label '
+                        "contains LABEL (e.g. 'Type 2'), or to a bare class name "
+                        "(e.g. 'Sy2'). Use --subclasses to split it further.")
+    p.add_argument('--subclasses', action='store_true',
+                   help='one contour per fine class instead of per coarse group')
+    p.add_argument('--filled', action='store_true',
+                   help='fill the histograms instead of drawing dashed contours')
     p.add_argument('--census', action='store_true', help='print the row accounting only')
     p.add_argument('--summary', metavar='PNG', help='write the population figure here')
     p.add_argument('--top', type=int, metavar='N',
@@ -460,7 +520,6 @@ def _main():
 
     plt.switch_backend('Agg')
     d = pd.read_parquet(os.path.expanduser(args.parquet))
-    # d = df[df['band']==args.band]
     outdir = os.path.expanduser(args.outdir)
 
     band = args.band[1:] if args.band and args.band.startswith('z') else args.band
@@ -483,16 +542,32 @@ def _main():
 
     if args.types:
         zmad_census(d, type_col=args.types, prefix=args.prefix)
+
+        groups = dict(TYPE_GROUPS)
+        if args.only:
+            hit = {k: v for k, v in groups.items()
+                   if args.only.lower() in k.lower() or args.only in v}
+            if not hit:
+                raise ValueError(f'--only {args.only!r} matched no group; '
+                                 f'labels are {list(groups)} '
+                                 f'and classes {sorted(sum(groups.values(), []))}')
+            groups = hit
+        if args.subclasses:
+            groups = {c: [c] for c in sum(groups.values(), [])}
+        outline = () if args.filled else tuple(groups)
+
         zmad_type_hist(d, type_col=args.types, prefix=args.prefix, cut=args.cut,
-                       save=os.path.join(outdir, 'zmad_type_hist.png'), dpi=args.dpi)
-        for mode in ('composition', 'rate'):
+                       groups=groups, outline=outline,
+                       save=os.path.join(outdir, f'zmad_type_hist{tag_b}.png'),
+                       dpi=args.dpi)
+        for mode in ('composition', 'rate', 'type_rate'):
             zmad_type_fraction(d, type_col=args.types, prefix=args.prefix,
                                cut=args.cut, mode=mode, dpi=args.dpi,
-                               save=os.path.join(outdir, f'zmad_type_{mode}.png'))
+                               save=os.path.join(outdir, f'zmad_type_{mode}{tag_b}.png'))
 
     fig, _ = zmad_summary(d, aperture=args.aperture, prefix=args.prefix,
                           sigma_cut=args.sigma_cut)
-    dest = os.path.expanduser(args.summary or 'zmad_summary.png')
+    dest = os.path.expanduser(args.summary or f'zmad_summary{tag_b}.png')
     os.makedirs(os.path.dirname(os.path.abspath(dest)), exist_ok=True)
     fig.savefig(dest, dpi=args.dpi, bbox_inches='tight')
     plt.close(fig)
