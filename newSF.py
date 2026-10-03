@@ -9,6 +9,7 @@ import pandas as pd
 import pickle
 import matplotlib.pyplot as plt
 from astropy.stats import sigma_clip
+from astropy.stats import poisson_conf_interval
 from linmix import linmix
 from VarTools import *
 from VarTools import _find_target_obj
@@ -503,9 +504,20 @@ def compute_target_stats(grouped_corr):
     cp50        = g_corr.quantile(0.50)
     cp84        = g_corr.quantile(0.84)
     binned_corr = g_corr.mean()
-    minerr_corr = ((cp50 - cp16) / sqrt_n).dropna()
-    maxerr_corr = ((cp84 - cp50) / sqrt_n).dropna()
+    # minerr_corr = ((cp50 - cp16) / sqrt_n).dropna()
+    # maxerr_corr = ((cp84 - cp50) / sqrt_n).dropna()
     ndmag       = n_corr.dropna()
+
+    gaussian_minerr = ((cp50 - cp16) / sqrt_n).dropna()
+    gaussian_maxerr = ((cp84 - cp50) / sqrt_n).dropna()
+
+    lo, hi = poisson_conf_interval(ndmag.values, interval='frequentist-confidence')
+    poisson_minerr = (n_corr - lo) / n_corr.values * binned_corr
+    poisson_maxerr = (hi - n_corr) / n_corr.values * binned_corr
+
+    minerr_corr = np.sqrt(gaussian_minerr**2+poisson_minerr**2)    
+    maxerr_corr = np.sqrt(gaussian_maxerr**2+poisson_maxerr**2)    
+
     return binned_corr, minerr_corr, maxerr_corr, ndmag
 
 
@@ -548,11 +560,11 @@ def compute_calstar_sf(cs, mag_column, mag_err, log_bins):
     # print(grouped_cs['dmag'].apply(list))
     # print(grouped_cs['sq_dmag_cs'].apply(list))
     
-    s = grouped_cs['dmag'].apply(list)
-    cats = s.index.get_level_values('log_bin').categories      # IntervalIndex
-    b = cats[cats.contains(1.4)][0]                            # the bin containing 1.4
-    sub = s.xs(b, level='log_bin')
-    print(sub)                                            # the object_index values
+    # s = grouped_cs['dmag'].apply(list)
+    # cats = s.index.get_level_values('log_bin').categories      # IntervalIndex
+    # b = cats[cats.contains(1.4)][0]                            # the bin containing 1.4
+    # sub = s.xs(b, level='log_bin')
+    # print(sub)                                            # the object_index values
 
     # pass 1: mean sq_dmag → median across stars
     mean_sq        = grouped_cs['sq_dmag_cs'].mean()
@@ -577,8 +589,18 @@ def compute_calstar_sf(cs, mag_column, mag_err, log_bins):
     dp84 = g_dmag_bin.quantile(0.84)
     # minerr_cs = ((dp50 - dp16)).dropna()
     # maxerr_cs = ((dp84 - dp50)).dropna()
-    minerr_cs = ((dp50 - dp16)/ sqrt_n_cs).dropna()
-    maxerr_cs = ((dp84 - dp50)/ sqrt_n_cs).dropna()
+    # minerr_cs = ((dp50 - dp16)/ sqrt_n_cs).dropna()
+    # maxerr_cs = ((dp84 - dp50)/ sqrt_n_cs).dropna()
+
+    gaussian_minerr = ((dp50 - dp16)/ sqrt_n_cs).dropna()
+    gaussian_maxerr = ((dp84 - dp50)/ sqrt_n_cs).dropna()
+
+    lo, hi = poisson_conf_interval(n_cs_bin.values, interval='frequentist-confidence')
+    poisson_minerr = (n_cs_bin - lo) / n_cs_bin.values * g_dmag_bin.mean()
+    poisson_maxerr = (hi - n_cs_bin) / n_cs_bin.values * g_dmag_bin.mean()
+
+    minerr_cs = np.sqrt(gaussian_minerr**2+poisson_minerr**2)    
+    maxerr_cs = np.sqrt(gaussian_maxerr**2+poisson_maxerr**2) 
 
     return df_cs, grouped_cs, mean_sq, avg_sq_dmag_cs, binminerr_cs, binmaxerr_cs, minerr_cs, maxerr_cs
 
@@ -845,6 +867,7 @@ def optSF(file, calstars=True, weight=False,
                                     ra=ra,
                                     dec=dec)
         else:
+            cs = cs1
             sdiag = None
 
         cs = quality_cuts(cs, ztf,mag_column,x=x)
@@ -875,7 +898,7 @@ def optSF(file, calstars=True, weight=False,
     
     from trace_SFpairs import trace_bin, sparse_bins
     print(sparse_bins(corr_sf, max_n=3))
-    print(trace_bin(ztf, corr_sf, '(1.256, 1.581]', mag_column, mag_err).to_string(index=False))
+    #print(trace_bin(ztf, corr_sf, '(1.256, 1.581]', mag_column, mag_err).to_string(index=False))
     
     print(f'    +{np.round(time.perf_counter() - tic, 2)} s: source errors estimate')
 
@@ -1381,6 +1404,7 @@ def plot_linmix(log_dt, log_sf, xerr, yerr,
     if save_plot:
         plt.savefig(path+f'SF_fit_{ra}.png', dpi=300, bbox_inches='tight')
         plt.close()
+        print(f'{path}/SF_fit_{ra}.png saved')
     else:
         plt.show()
  
@@ -1646,7 +1670,8 @@ def bpl_mcmc(old_dict, initial_guess=[0.5, 0.5, 100], model_check=False,
     sf_mag = old_dict['SF'][(interval_index.left >= 1) & 
                             (interval_index.right <= 365) & 
                             (old_dict['SF'] != 0) & 
-                            (old_dict['#elements'] >= 3)].dropna()
+                            (old_dict['#elements'] >= 3)
+                            ].dropna()
     dt = sf_mag.index.categories[sf_mag.index.codes].mid
     dt_lenbin = sf_mag.index.categories[sf_mag.index.codes].length / 2
     maxerr_sf2 = old_dict['SFmaxerr'][old_dict['SFmaxerr'].index.isin(sf_mag.index)]
@@ -1934,7 +1959,10 @@ def plot_SF(old_dict,band, model,use_all_points=True,label=True,color_data='blue
 
     #old_dict = SF_dict[2]
     interval_index = pd.IntervalIndex(old_dict['SF'].index)
-    sf_mag_lim=old_dict['SF'][(interval_index.left >= 1)&(interval_index.right <= 365)&(old_dict['SF']!=0)].dropna()
+    sf_mag_lim=old_dict['SF'][(interval_index.left >= 1)&
+                              (interval_index.right <= 365)&
+                              (old_dict['SF']!=0)&
+                              (old_dict['#elements']>=3)].dropna()
     
     if not use_all_points:
         print(sf_mag_lim[-1:],f'excluded from fit')

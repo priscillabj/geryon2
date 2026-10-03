@@ -42,11 +42,12 @@ from newSF import SF_linmix
 
 # ── configuration ─────────────────────────────────────────────────────────────
 X          = 10                                    # must match the optSF run
-INPUT_GLOB = os.environ["HOME"] + f"/results/partials/*/*_{X}cs.pkl"
+# INPUT_GLOB = os.environ["HOME"] + f"/results/partials/*/*_{X}cs.pkl"
+INPUT_GLOB = os.environ["HOME"] + f"/results/partials/10.1662_24.76092/10.16620_+24.76092_zg_merged.parquet_10cs.pkl"
 # INPUT_GLOB = os.environ["HOME"] + "/SDSS_S82_QSO/*/ztfphot_stars_*/sf_out/*.pkl"
 FIT_SUFFIX = "_linmixfit.pkl"                      # output: <input stem> + this
 TIMEOUT_S  = 300
-SAVE_PLOT  = False
+SAVE_PLOT  = True
 # MTIME_DAY  = "2026-08-19"                          # None = no date filter;
 MTIME_DAY  = None                          # None = no date filter;
                                                    # else keep files modified on this day
@@ -90,8 +91,8 @@ def allowed_pkl_names():
     """basenames of the _{X}cs.pkl outputs whose parent parquet is in FILE_LIST.
     optSF names each output '<parquet_basename>_{X}cs.pkl', so the parent list
     maps 1:1 onto expected pkl basenames."""
-    # parents = json.loads(Path(FILE_LIST).read_text())
-    parents = json.loads(FILE_LIST.read_text())
+    parents = json.loads(Path(FILE_LIST).read_text())
+    # parents = json.loads(FILE_LIST.read_text())
     return {f"{os.path.basename(p)}_{X}cs.pkl" for p in parents}
 
 
@@ -115,7 +116,7 @@ def build_file_list():
         all_files = [f for f in all_files if os.path.getmtime(f) >= cutoff]
         print(f"[master] mtime >= {MTIME_DAY}: {len(all_files)} files match", flush=True)
 
-    todo = [f for f in all_files if not os.path.exists(out_name(f))]
+    todo = [f for f in all_files] #if not os.path.exists(out_name(f))]
     print(f"[master] {len(all_files)} SF pkl files found, "
           f"{len(all_files) - len(todo)} already fitted, {len(todo)} to do",
           flush=True)

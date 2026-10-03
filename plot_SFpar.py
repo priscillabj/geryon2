@@ -25,6 +25,10 @@ TP1 = ["Sy1", "Sy1.2"]            # Type 1        -> black, hollow
 SY  = ["Sy1.5"]                   # intermediate  -> C2
 TP2 = ["Sy1.8", "Sy1.9", "Sy2"]  # Type 2        -> C1
 
+GROUPS = [(TP1, "black", "Type 1", True),
+          (SY,  "#E69F00", "Sy1.5", False),
+          (TP2, "#56B4E9", "Type 2", False)]
+
 # changing-look AGN, by bat_index
 CL_MT  = [72, 184, 280, 349, 757, 981, 1037, 1070, 106, 116, 471, 530, 1327]  # Temple+22
 CL_LIT = [73, 216, 557, 656, 595, 994, 1188, 1189, 1194]  # Tohline & Osterbrock 1976;
@@ -44,37 +48,47 @@ def load(PROPS, band, fit_model):
 def scatter(PROPS, band, par, fit_model, CL=False):
     sub = load(PROPS, band, fit_model)
     print(f"scatter z{band}: {len(sub)} sources grouped by {par}")
-    fig, ax = plt.subplots(figsize=(7, 5))
-    for types, color, label in [(TP1, "black", "Type 1"),
-                                (SY,  "#E69F00",    "Sy1.5"),
-                                (TP2, "#56B4E9",    "Type 2")]:
-        agn = sub[sub[par].isin(types)]
-        if len(agn) == 0:
-            continue
-        xerr = np.nan_to_num(np.abs(np.vstack([agn[f"gamma_minerr_{fit_model}"], agn[f"gamma_maxerr_{fit_model}"]])))
-        yerr = np.nan_to_num(np.abs(np.vstack([agn[f"A_365_minerr_{fit_model}"], agn[f"A_365_maxerr_{fit_model}"]])))
-        kw = dict(fmt="o", alpha=0.3, color=color, label=f"{label} (n={len(agn)})",
-                  xerr=xerr, yerr=yerr, elinewidth=0.6, capsize=0)
-        if color == "black":
-            kw.update(markerfacecolor="none", ecolor="k")
-        ax.errorbar(agn[f"gamma_{fit_model}"], agn[f"A_365_{fit_model}"], **kw)
+
+    is_cand = pd.Series(False, index=sub.index)
     if CL:
-        COL = f'A_365_{fit_model}'
-        OUR_CL = os.path.expanduser(f"~/results/{COL}_CL_candidates.parquet")
-        OUR_DF = load(OUR_CL, band, fit_model)
-        OUR_CAND = OUR_DF["bat_index"].values
+        OUR_CL = os.path.expanduser(f"~/results/A_365_{fit_model}_CL_overlay.parquet")
+        OUR_CAND = pd.to_numeric(load(OUR_CL, band, fit_model)["bat_index"],
+                                 errors="coerce").values
+        is_cand = pd.to_numeric(sub["bat_index"], errors="coerce").isin(OUR_CAND)
+        print(f"  this work: {int(is_cand.sum())} candidates in sample")
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    for types, color, label, hollow in GROUPS:
+        n_tot = int(sub[par].isin(types).sum())
+        if n_tot == 0:
+            continue
+        for cand, fmt, ms, mew, alpha in [(False, "o", 6, 0.6, 0.3),
+                                          (True, "D", 10, 2.5, 0.5)]:
+            agn = sub[sub[par].isin(types) & (is_cand == cand)]
+            if len(agn) == 0:
+                continue
+            xerr = np.nan_to_num(np.abs(np.vstack([agn[f"gamma_minerr_{fit_model}"],
+                                                   agn[f"gamma_maxerr_{fit_model}"]])))
+            yerr = np.nan_to_num(np.abs(np.vstack([agn[f"A_365_minerr_{fit_model}"],
+                                                   agn[f"A_365_maxerr_{fit_model}"]])))
+            ax.errorbar(agn[f"gamma_{fit_model}"], agn[f"A_365_{fit_model}"],
+                        fmt=fmt, color=color, alpha=alpha, xerr=xerr, yerr=yerr,
+                        elinewidth=0.6, capsize=0, markersize=ms, markeredgewidth=mew,
+                        markerfacecolor="none" if (color == "black") else color,
+                        zorder=3 if cand else 2,
+                        label=None if cand else f"{label} (n={n_tot})")
+
+    if CL:
         cl1 = sub[pd.to_numeric(sub["bat_index"], errors="coerce").isin(CL_MT + CL_LIT)]
-        # cl1 = sub[pd.to_numeric(sub["bat_index"], errors="coerce").isin(CL_MT)]
-        cl2 = sub[pd.to_numeric(sub["bat_index"], errors="coerce").isin(OUR_CAND)]
-        # print(f"  CL overlay: {len(cl)} rows from {len(CL_MT + CL_LIT)} indices")
-        print(f"  CL overlay: {len(cl1)} rows from {len(CL_MT)} indices")
+        print(f"  literature: {len(cl1)} rows from {len(CL_MT + CL_LIT)} indices")
         if len(cl1):
             ax.plot(cl1[f"gamma_{fit_model}"], cl1[f"A_365_{fit_model}"], "o",
                     fillstyle="none", markeredgecolor="black", markeredgewidth=2,
-                    markersize=15, linestyle="none", label=f"Temple+22 (n={len(cl1)})")
-            ax.plot(cl2[f"gamma_{fit_model}"], cl2[f"A_365_{fit_model}"], "o",
-                    fillstyle="none", markeredgecolor="#FF69AF", markeredgewidth=2,
-                    markersize=15, linestyle="none", label=f"This work (n={len(cl2)})")
+                    markersize=15, linestyle="none",
+                    label=f"Temple+22 (n={len(cl1)})")
+        ax.plot([], [], "D", fillstyle="none", markeredgecolor="0.3", markeredgewidth=2.5,
+                markersize=10, linestyle="none", label=f"This work (n={int(is_cand.sum())})")
+
     ax.set_xlabel(r"$\gamma$  (SF slope)")
     ax.set_ylabel(r"$A_{365}$")
     ax.tick_params(axis="both", labelsize=12)
@@ -82,8 +96,8 @@ def scatter(PROPS, band, par, fit_model, CL=False):
     ax.set_xlim(5e-2, 1e0); ax.set_ylim(5e-3, 1e0)
     ax.grid(True, alpha=0.3)
     ax.set_title(f"z{band}")
-    ax.legend()
-    out = os.path.join(RESULTS, f"{band}band_amp_vs_gamma_by{par}_{fit_model}_CL{CL}_sigma>10.png")
+    ax.legend(fontsize=9)
+    out = os.path.join(RESULTS, f"{band}band_amp_vs_gamma_by{par}_{fit_model}_CL{CL}_BOTHCAND_sigma>10.png")
     fig.tight_layout(); fig.savefig(out, dpi=150)
     print("wrote", out)
 
