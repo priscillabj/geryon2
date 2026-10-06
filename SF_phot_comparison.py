@@ -8,16 +8,16 @@ from astropy.table import Table
 from astropy.coordinates import SkyCoord
 
 sys.path.insert(0, os.path.expanduser('~/git'))   # dir containing newSF.py / VarTools.py
-from newSF import SF_wnoise
+from newSF import SF_wnoise, SF_linmix            # requires '#elements' in SF_wnoise's dict
 from VarTools import radec_filename, _find_target_obj
 
 plt.rcParams.update({'font.size': 14, 'axes.titlesize': 16, 'axes.labelsize': 17,
                      'xtick.labelsize': 15, 'ytick.labelsize': 15, 'legend.fontsize': 13})
 
-COLORS = ['#4c72b0', '#dd8452','#c44e52','mediumseagreen']   # DR, FPS, Zubercal, Our Photometry
+COLORS   = ['#4c72b0', '#dd8452', '#c44e52', 'mediumseagreen']   # DR, FPS, Zubercal, This work
+PLOT_FIT = True                                                   # draw LinMix power law on SF plots
 
-LC  = os.path.expanduser('~/LC/')                 # SET THIS
-# OUT = os.path.expanduser('~/results/SF_phot_comparison_g.png')
+LC  = os.path.expanduser('~/LC/')
 RES = os.path.expanduser('~/results')
 
 dr_f = [LC+'DR/'+f for f in [
@@ -34,10 +34,11 @@ np_f = [os.path.expanduser('~/BAT_results/')+f for f in [
     '179.48389_+55.45359_zg_merged.parquet',
     '189.91435_-5.34418_000423_zg_ccd04_q1.parquet']]
 
+
 def single_quad(df, f='field', c='ccdid', q='qid'):
-    if {f, c, q} <= set(df.columns):
-        m = df[[f, c, q]].mode().iloc[0]
-        df = df[(df[f] == m[f]) & (df[c] == m[c]) & (df[q] == m[q])]
+    if {f, c, q} <= set(df.columns) and not df.empty:
+        key = df.groupby([f, c, q]).size().idxmax()
+        df = df[(df[f] == key[0]) & (df[c] == key[1]) & (df[q] == key[2])]
     return df
 
 def _read_dr(p, c):
@@ -53,10 +54,10 @@ def _read_newphot(p, c):
     return d[(d.MAGLIM > 20.5) & (d.SEEING < 3)]
 
 SOURCES = [
-    ('DR',             dr_f, _read_dr,      'mjd',    'mag',          'magerr',        ('filtercode', b'zg')),
-    ('FPS',            fp_f, _read_csv,     'mjd',    'mag_tot',      'magunc_tot',    ('filter', 'ZTF_g')),
-    ('Zubercal',       zb_f, _read_csv,     'MJD',    'Mag',          'Magerr',        ('Filter', 'g')),
-    ('This work',      np_f, _read_newphot, 'OBSMJD', 'MAG_4_TOT_AB', 'MERR_4_TOT_AB', None),
+    ('DR',        dr_f, _read_dr,      'mjd',    'mag',          'magerr',        ('filtercode', b'zg')),
+    ('FPS',       fp_f, _read_csv,     'mjd',    'mag_tot',      'magunc_tot',    ('filter', 'ZTF_g')),
+    ('Zubercal',  zb_f, _read_csv,     'MJD',    'Mag',          'Magerr',        ('Filter', 'g')),
+    ('This work', np_f, _read_newphot, 'OBSMJD', 'MAG_4_TOT_AB', 'MERR_4_TOT_AB', None),
 ]
 
 
@@ -65,12 +66,10 @@ def load(fn, reader, t, m, e, band):
     if band:
         d = d[d[band[0]] == band[1]]
         print(len(d))
-    # d = d.dropna(subset=[t, m, e])
-    # print(len(d))
-    # d = single_quad(d[d[e] < 0.5])
     d = single_quad(d)
     print(len(d))
     return d[t].values, d[m].values, d[e].values
+
 
 def sci(v, _):
     k = int(np.floor(np.log10(v))); m = round(v / 10**k, 2)
@@ -83,6 +82,16 @@ def log_ticks(axis, lim, subs):
     axis.set_major_locator(FixedLocator([v for v in t if lo <= v <= hi]))
     axis.set_major_formatter(FuncFormatter(sci))
     axis.set_minor_formatter(NullFormatter())
+
+
+def fit_label(name, fit):
+    if fit is None:
+        return f'{name}: fit skipped'
+    return (rf'{name}: $\gamma={fit["gamma_spl"]:.2f}'
+            rf'^{{+{fit["gamma_maxerr_spl"]:.2f}}}_{{-{fit["gamma_minerr_spl"]:.2f}}}$, '
+            rf'$A_{{1yr}}={fit["A_365_spl"]:.3f}'
+            rf'^{{+{fit["A_365_maxerr_spl"]:.3f}}}_{{-{fit["A_365_minerr_spl"]:.3f}}}$')
+
 
 def plot_target(k, lcs, ylim=None, savedir=None):
     fig, axes = plt.subplots(len(SOURCES), 1, figsize=(9, 8), sharex=True, sharey=True)
@@ -108,11 +117,12 @@ def plot_target(k, lcs, ylim=None, savedir=None):
     if savedir:
         ra, dec, b = radec_filename(np_f[k], band=True)
         fig.savefig(os.path.join(savedir, f'LC_phot_comparison_{ra}_{dec}_{b}.png'), bbox_inches='tight')
-        # fig.savefig(os.path.join(savedir, f'lc_{k}.png'), bbox_inches='tight')
     return fig
 
 
 LCS = {}   # (k, source name) -> (t, m, e)
+dt_fit = np.geomspace(1, 365, 50)
+
 for i in range(len(np_f)):
     fig, ax = plt.subplots(figsize=(7.5, 6))
     plotted = False
@@ -123,15 +133,23 @@ for i in range(len(np_f)):
         if len(t) < 2:
             print(f'{name} {os.path.basename(files[i])}: {len(t)} epochs after cuts, skipped')
             continue
-        with contextlib.redirect_stdout(io.StringIO()):
-            SF = SF_wnoise(m, t, e, cs_all=None)[0]
+        with contextlib.redirect_stdout(io.StringIO()):   # silence newSF debug output
+            SF  = SF_wnoise(m, t, e, cs_all=None)[0]
+            fit = SF_linmix(SF)                            # amp_at=365 by default
         s  = SF['SF'].dropna()
         iv = s.index.categories[s.index.codes]
+        print(fit_label(name, fit))
+        # ax.errorbar(iv.mid, s.values, xerr=iv.length / 2,
+        #             yerr=(SF['SFminerr'].loc[s.index], SF['SFmaxerr'].loc[s.index]),
+        #             fmt='o', ms=4, capsize=0, color=col, label=fit_label(name, fit))
         ax.errorbar(iv.mid, s.values, xerr=iv.length / 2,
                     yerr=(SF['SFminerr'].loc[s.index], SF['SFmaxerr'].loc[s.index]),
-                    fmt='o', ms=4, capsize=0, color=col, label=f'{name} (N={len(t)})')
+                    fmt='o', ms=4, capsize=0, color=col, label=name)
+        if PLOT_FIT and fit is not None:
+            ax.plot(dt_fit, fit['A_1_spl'] * dt_fit**fit['gamma_spl'], '-', lw=2, color=col)
         plotted = True
-        print(f'{name} {os.path.basename(files[i])}: {len(t)} epochs, {len(s)} bins')
+        print(f'{name} {os.path.basename(files[i])}: {len(t)} epochs, {len(s)} bins, '
+              f'fit {"skipped" if fit is None else "ok"}')
 
     ra, dec, b = radec_filename(np_f[i], band=True)
     ax.set(xscale='log', yscale='log', xlabel=r'$\Delta t$ [d]', ylabel='SF [mag]',
@@ -140,7 +158,7 @@ for i in range(len(np_f)):
         lo, hi = ax.get_ylim()
         log_ticks(ax.yaxis, (lo, hi),
                   (1, 1.5, 2, 3, 5, 7) if np.log10(hi / lo) < 1.2 else (1, 2, 3, 5, 7))
-        ax.legend()
+        ax.legend(loc='lower right')
     else:
         print(f'{ra}_{dec}: nothing plotted')
 
@@ -151,7 +169,3 @@ for i in range(len(np_f)):
     print('saved', out)
 
     plt.close(plot_target(i, LCS, savedir=RES))
-
-# plt.tight_layout()
-# plt.savefig(OUT, dpi=150)
-# print('saved', OUT)

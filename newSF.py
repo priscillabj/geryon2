@@ -1253,7 +1253,7 @@ def SF_wnoise(mag_col, time_col, mag_err, cs_all=None, clip=False, weight=False,
             plt.close()
 
     # ── store and return ──────────────────────────────────────────────────────
-    SF_dict = [{'SF': SF, 'SFmaxerr': maxerr_sf, 'SFminerr': minerr_sf}]
+    SF_dict = [{'SF': SF, 'SFmaxerr': maxerr_sf, 'SFminerr': minerr_sf,'#elements': ndmag}]
 
     if save:
         # name_file = path + 'simulated_SF.pkl'
