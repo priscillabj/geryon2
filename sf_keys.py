@@ -34,6 +34,28 @@ BPL_KEYS = [
 # generic 'A_maxerr' to confuse across models. The SPL A_365 amplitude and the
 # BPL A_break amplitude are still different quantities - don't pair them.
 
+# ── starplaw (SF_boot.py): SF_obs = sqrt(PL^2 + (N SF_star)^2), joint bootstrap ──
+# Fitted to the observed SF with the comparison-star template as a noise term
+# (no noise subtraction). A_L is the power-law amplitude at L days, pivot-free:
+# A_365_boot is the one to put next to A_365_spl. N scales the star template.
+# Values are medians, errors 16/84-percentile distances, of the bootstrap MAP
+# refits. Then fit diagnostics/flags and run settings; 'epochs', 'n_stars' and
+# 'nboot' are unsuffixed in the pkl (merge's extract() suffixes them).
+
+BOOT_KEYS = [
+    "A_1_boot", "A_1_maxerr_boot", "A_1_minerr_boot",
+    "A_100_boot", "A_100_maxerr_boot", "A_100_minerr_boot",
+    "A_300_boot", "A_300_maxerr_boot", "A_300_minerr_boot",
+    "A_365_boot", "A_365_maxerr_boot", "A_365_minerr_boot",
+    "gamma_boot", "gamma_maxerr_boot", "gamma_minerr_boot",
+    "N_boot", "N_maxerr_boot", "N_minerr_boot",
+    "SF_pivot_boot", "SF_pivot_maxerr_boot", "SF_pivot_minerr_boot", "pivot_boot",
+    "n_bins_boot", "dof_boot", "chi2_full_boot", "chi2red_boot",
+    "frac_above_model_boot", "adjcorr_boot", "frac_intr_maxlag_boot",
+    "flag_boot", "N_prior_dominated_boot",
+    "method_boot", "nboot", "epochs", "n_stars",
+]
+
 # ── legacy campaign (leading '_' from the empty `phot` prefix) ────────────────
 # ~/results/sf_cache/ (the 1018-source SPL run) was written with these names.
 # Point tools at LEGACY_SPL_KEYS when reading that cache.
@@ -46,6 +68,7 @@ LEGACY_SPL_KEYS = [
 KEYS = {
     "spl":        SPL_KEYS,
     "bpl":        BPL_KEYS,
+    "boot":       BOOT_KEYS,
     "spl_legacy": LEGACY_SPL_KEYS,
 }
 
@@ -53,6 +76,7 @@ KEYS = {
 GAMMA = {
     "spl":        "gamma_spl",
     "bpl":        "gamma_bpl",
+    "boot":       "gamma_boot",
     "spl_legacy": "_gamma_spl",
 }
 

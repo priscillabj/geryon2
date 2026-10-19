@@ -557,20 +557,20 @@ def compute_calstar_sf(cs, mag_column, mag_err, log_bins):
     df_cs['sq_dmag_cs'] = df_cs['dmag'] ** 2
 
     grouped_cs = df_cs.groupby(['object_index', 'log_bin'], observed=True)
-    # print(grouped_cs['dmag'].apply(list))
-    # print(grouped_cs['sq_dmag_cs'].apply(list))
+    print(grouped_cs['dmag'].apply(list))
+    print(grouped_cs['sq_dmag_cs'].apply(list))
     
-    # s = grouped_cs['dmag'].apply(list)
-    # cats = s.index.get_level_values('log_bin').categories      # IntervalIndex
-    # b = cats[cats.contains(1.4)][0]                            # the bin containing 1.4
-    # sub = s.xs(b, level='log_bin')
-    # print(sub)                                            # the object_index values
+    s = grouped_cs['dmag'].apply(list)
+    cats = s.index.get_level_values('log_bin').categories      # IntervalIndex
+    b = cats[cats.contains(1.4)][0]                            # the bin containing 1.4
+    sub = s.xs(b, level='log_bin')
+    print(sub)                                            # the object_index values
 
-    # pass 1: mean sq_dmag → median across stars
+    # pass 1: mean sq_dmag → median across stars (individually)
     mean_sq        = grouped_cs['sq_dmag_cs'].mean()
     avg_sq_dmag_cs = mean_sq.unstack(level='object_index').median(axis=1)
 
-    # pass 1 continued: per-star RMS → err_prop across stars
+    # pass 1 continued: per-star RMS → err_prop across stars (individually)
     rms_per_star_bin = np.sqrt(mean_sq)
     g_rms_bin        = rms_per_star_bin.groupby(level='log_bin', observed=True)
     rp16 = g_rms_bin.quantile(0.16)
@@ -587,8 +587,8 @@ def compute_calstar_sf(cs, mag_column, mag_err, log_bins):
     dp16 = g_dmag_bin.quantile(0.16)
     dp50 = g_dmag_bin.quantile(0.50)
     dp84 = g_dmag_bin.quantile(0.84)
-    # minerr_cs = ((dp50 - dp16)).dropna()
-    # maxerr_cs = ((dp84 - dp50)).dropna()
+    lodisp_cs = ((dp50 - dp16)).dropna()
+    updisp_cs = ((dp84 - dp50)).dropna()
     # minerr_cs = ((dp50 - dp16)/ sqrt_n_cs).dropna()
     # maxerr_cs = ((dp84 - dp50)/ sqrt_n_cs).dropna()
 
@@ -602,14 +602,14 @@ def compute_calstar_sf(cs, mag_column, mag_err, log_bins):
     minerr_cs = np.sqrt(gaussian_minerr**2+poisson_minerr**2)    
     maxerr_cs = np.sqrt(gaussian_maxerr**2+poisson_maxerr**2) 
 
-    return df_cs, grouped_cs, mean_sq, avg_sq_dmag_cs, binminerr_cs, binmaxerr_cs, minerr_cs, maxerr_cs
+    return df_cs, grouped_cs, mean_sq, avg_sq_dmag_cs, binminerr_cs, binmaxerr_cs, minerr_cs, maxerr_cs, lodisp_cs, updisp_cs
 
 
 # ── 6. SF combination (target − calstars) ────────────────────────────────────
 
 def combine_sf(binned_corr, avg_sq_dmag_cs,
                minerr_corr, maxerr_corr,
-               minerr_cs, maxerr_cs):
+               minerr_cs, maxerr_cs, lodisp_cs, updisp_cs):
     """Subtract calstar noise from target SF.
 
     Returns
@@ -635,6 +635,8 @@ def combine_sf(binned_corr, avg_sq_dmag_cs,
     dt_midbin_cs = sf_cs.index.categories[sf_cs.index.codes].mid
     dt_lenbin_cs = sf_cs.index.categories[sf_cs.index.codes].length / 2
 
+    disp_cs = (lodisp_cs+updisp_cs)/2
+    print(disp_cs)
     sf = np.sqrt((np.pi / 2) * dt)
 
     # zero out bins where calstar noise exceeds target signal
@@ -912,7 +914,7 @@ def optSF(file, calstars=True, weight=False,
         (df_cs, grouped_cs, mean_sq,
             avg_sq_dmag_cs,
             binminerr_cs, binmaxerr_cs,
-            minerr_cs, maxerr_cs) = compute_calstar_sf(cs, mag_column, mag_err, log_bins)
+            minerr_cs, maxerr_cs, lodisp_cs,updisp_cs) = compute_calstar_sf(cs, mag_column, mag_err, log_bins)
     else:
         print('not enough calib stars')
         return None
@@ -940,7 +942,7 @@ def optSF(file, calstars=True, weight=False,
             dt_midbin_cs, dt_lenbin_cs) = combine_sf(
             binned_corr, avg_sq_dmag_cs,
             minerr_corr, maxerr_corr,
-            minerr_cs, maxerr_cs)
+            minerr_cs, maxerr_cs, lodisp_cs,updisp_cs)
         print(f'    +{np.round(time.perf_counter() - tic, 2)} s: stars errors estimate')
     else:
         SF        = np.sqrt(sq_avg_dmag_corr)
@@ -989,7 +991,15 @@ def optSF(file, calstars=True, weight=False,
         'RA':        ra,
         'mag':       mztf,
         'band':      band,
-        'epochs':    len(ztf)
+        'epochs':    len(ztf),
+        # ── forward-model (2-component) inputs: UNsubtracted source SF +
+        #    calstar noise template, for sf_2comp_mcmc (stars+powerlaw). ──
+        'SF_obs':        sf,            # observed (uncorrected) source SF
+        'SF_obs_maxerr': maxerr_corr,
+        'SF_obs_minerr': minerr_corr,
+        'SF_cs':         sf_cs,         # calstar SF noise template per bin
+        'SF_cs_maxerr':  binmaxerr_cs,
+        'SF_cs_minerr':  binminerr_cs,
     }
     print(SF_dict)
 
@@ -1129,7 +1139,7 @@ def SF_wnoise(mag_col, time_col, mag_err, cs_all=None, clip=False, weight=False,
         (df_cs, grouped_cs, mean_sq,
          avg_sq_dmag_cs,
          binminerr_cs, binmaxerr_cs,
-         minerr_cs, maxerr_cs) = compute_calstar_sf(
+         minerr_cs, maxerr_cs, lodisp_cs,updisp_cs) = compute_calstar_sf(
             cs, mag_column, err_column, log_bins)
 
     # ── weighted mean override ────────────────────────────────────────────────
@@ -1154,7 +1164,7 @@ def SF_wnoise(mag_col, time_col, mag_err, cs_all=None, clip=False, weight=False,
          dt_midbin_cs, dt_lenbin_cs) = combine_sf(
             binned_corr, avg_sq_dmag_cs,
             minerr_corr, maxerr_corr,
-            minerr_cs, maxerr_cs)
+            minerr_cs, maxerr_cs,lodisp_cs,updisp_cs)
         if verbose:
             print(f'    +{np.round(time.perf_counter() - tic, 2)} s: stars errors estimate')
     else:
@@ -1836,6 +1846,258 @@ def bpl_mcmc(old_dict, initial_guess=[0.5, 0.5, 100], model_check=False,
         _p(f"Could not compute autocorrelation time: {e}")
 
     return SF_dict 
+
+"""
+SF_starplaw.py — canonical "stars + power law" structure-function fit.
+
+Supervisor's model (meeting): fit the UNsubtracted source SF as the empirical
+calstar SF (per-bin, as bumpy as it is) scaled by ONE normalization, PLUS an
+intrinsic power law. Variances add, so in SF space:
+
+    sf_model(dt) = sqrt( N * sf_cs(dt)^2 + (A * dt^gamma)^2 )
+
+    A, gamma : the INTRINSIC power law (what you want; comparable to gamma_spl).
+    N        : single nuisance normalization shared across ALL bins, ~1, lets
+               the star floor float up/down "a little" (tight prior, not flat).
+
+Fit is in LOG space (log10 SF residuals) — per "you're still fitting in
+logarithmic space". Data error per bin = source_err (+) calstar_err in
+quadrature — "you have an error on the stars, add them in quadrature", the same
+combination combine_sf uses. No bin is zeroed or dropped (unlike subtract-then-
+linmix): the floor dominates at short lag (flat in log-log), the power law takes
+over at long lag (slope gamma).
+
+Inputs: the keys optSF now stores in SF_dict —
+    SF_obs, SF_obs_minerr, SF_obs_maxerr, SF_cs, SF_cs_minerr, SF_cs_maxerr
+    (+ '#elements' for the per-bin pair-count gate).
+
+Drop these functions into newSF.py (emcee/curve_fit are imported there), or
+import this module alongside it. Output keys use the `_splcs` suffix.
+"""
+
+LN10 = np.log(10.0)
+
+
+# ── model ─────────────────────────────────────────────────────────────────────
+def sf_star_plaw(dt, A, gamma, N, sf_cs):
+    """sqrt( N*sf_cs^2 + (A*dt^gamma)^2 ). dt and sf_cs are per-bin arrays."""
+    return np.sqrt((N * sf_cs) ** 2 + (A * dt ** gamma) ** 2)
+
+
+# ── emcee pieces (log-SF space) ───────────────────────────────────────────────
+def _sp_logprior(theta, free_N, n_prior, n_bounds, gamma_max):
+    if free_N:
+        A, gamma, N = theta
+    else:
+        A, gamma = theta; N = 1.0
+    lo, hi = n_bounds
+    if A <= 0 or not (0.0 < gamma < gamma_max) or not (lo < N < hi):
+        return -np.inf
+    lp = -np.log(A)                       # scale-invariant 1/A prior on amplitude
+    if free_N:
+        mu, sig = n_prior                 # tight Gaussian: stars vary only "a little"
+        lp += -0.5 * ((N - mu) / sig) ** 2
+    return lp
+
+
+def _sp_loglike(theta, dt, sf_obs, sf_cs, log_err, free_N):
+    if free_N:
+        A, gamma, N = theta
+    else:
+        A, gamma = theta; N = 1.0
+    model = np.sqrt(N * sf_cs ** 2 + (A * dt ** gamma) ** 2)
+    resid = np.log10(sf_obs) - np.log10(model)
+    return -0.5 * np.sum((resid / log_err) ** 2 + np.log(2 * np.pi * log_err ** 2))
+
+
+def _sp_logpost(theta, dt, sf_obs, sf_cs, log_err, free_N, n_prior, n_bounds, gamma_max):
+    lp = _sp_logprior(theta, free_N, n_prior, n_bounds, gamma_max)
+    if not np.isfinite(lp):
+        return -np.inf
+    return lp + _sp_loglike(theta, dt, sf_obs, sf_cs, log_err, free_N)
+
+
+# ── input extraction / alignment ──────────────────────────────────────────────
+def required_sf_dict_keys():
+    """Keys optSF must store in SF_dict for this fit (calstar branch, n>1)."""
+    return ['SF_obs', 'SF_obs_minerr', 'SF_obs_maxerr',
+            'SF_cs', 'SF_cs_minerr', 'SF_cs_maxerr']
+
+
+def _prep_inputs(old_dict, fit_min, fit_max, min_elements):
+    """Align the stored Series, combine errors, gate on #elements, window to
+    [fit_min, fit_max]. Returns (dt, sf_obs, sf_cs, log_err) or None."""
+    missing = [k for k in required_sf_dict_keys() if k not in old_dict]
+    if missing:
+        print(f'SF_starplaw: missing keys {missing} — did optSF store them?')
+        return None
+
+    cols = {
+        'sf_obs': old_dict['SF_obs'],
+        'se':     (old_dict['SF_obs_minerr'] + old_dict['SF_obs_maxerr']) / 2,
+        'sf_cs':  old_dict['SF_cs'],
+        'ce':     (old_dict['SF_cs_minerr'] + old_dict['SF_cs_maxerr']) / 2,
+    }
+    if '#elements' in old_dict:
+        cols['nel'] = old_dict['#elements']
+    df = pd.DataFrame(cols).dropna(subset=['sf_obs', 'se', 'sf_cs', 'ce'])
+
+    # source (+) calstar error in quadrature — same combination combine_sf uses
+    df['err'] = np.sqrt(df['se'] ** 2 + df['ce'] ** 2)
+    df = df[(df['sf_obs'] > 0) & (df['err'] > 0)]
+    if 'nel' in df.columns:
+        df = df[df['nel'].fillna(0) >= min_elements]
+
+    ii  = pd.IntervalIndex(df.index)
+    df  = df[(ii.left >= fit_min) & (ii.right <= fit_max)]
+    if len(df) < 4:                       # 3 params + 1
+        print(f'SF_starplaw: too few bins to fit ({len(df)}) — SKIPPING')
+        return None
+
+    dt      = pd.IntervalIndex(df.index).mid.to_numpy(dtype=float)
+    sf_obs  = df['sf_obs'].to_numpy(dtype=float)
+    sf_cs   = df['sf_cs'].to_numpy(dtype=float)
+    log_err = df['err'].to_numpy(dtype=float) / (sf_obs * LN10)
+    return dt, sf_obs, sf_cs, log_err
+
+
+# ── driver ────────────────────────────────────────────────────────────────────
+def SF_starplaw(old_dict, amp_at=365.0, free_N=True, n_prior=(1.0, 0.2),
+                n_bounds=(0.5, 2.0), gamma_max=2.0,
+                fit_min=1.0, fit_max=365.0, min_elements=3,
+                nwalkers=32, nsteps=3000, burnin=500,
+                plot=False, save_plot=False, path=None,
+                progress=False, verbose=False):
+    """Fit sf_obs = sqrt(N*sf_cs^2 + (A*dt^gamma)^2) in log space by emcee,
+    seeded by curve_fit. Returns a dict of `_splcs` keys, or None if skipped.
+
+    free_N   : fit the star normalization N (True, 3 params) or fix it at 1.
+    n_prior  : (mu, sigma) Gaussian on N — tight = "stars vary a little".
+    n_bounds : hard guard on N (keeps it positive / sane).
+    gamma_max: upper bound on the power-law slope prior.
+    """
+    _p = print if verbose else (lambda *a, **k: None)
+
+    prepped = _prep_inputs(old_dict, fit_min, fit_max, min_elements)
+    if prepped is None:
+        return None
+    dt, sf_obs, sf_cs, log_err = prepped
+    sf_err_lin = log_err * sf_obs * LN10          # back to linear SF errors (for seed/plot)
+
+    # ── curve_fit seed (linear SF space; just a starting point) ────────────────
+    if free_N:
+        model_lin = lambda d, A, gamma, N: sf_star_plaw(d, A, gamma, N, sf_cs)
+        p0, lo, hi = [0.1, 0.4, 1.0], [1e-4, 1e-3, n_bounds[0] + 1e-3], [5.0, gamma_max - 1e-3, n_bounds[1] - 1e-3]
+    else:
+        model_lin = lambda d, A, gamma: sf_star_plaw(d, A, gamma, 1.0, sf_cs)
+        p0, lo, hi = [0.1, 0.4], [1e-4, 1e-3], [5.0, gamma_max - 1e-3]
+    try:
+        popt, _ = curve_fit(model_lin, dt, sf_obs, p0=p0, sigma=sf_err_lin,
+                            absolute_sigma=True, bounds=(lo, hi), maxfev=10000)
+        if free_N:
+            A0, g0, N0 = popt
+        else:
+            A0, g0 = popt; N0 = 1.0
+    except Exception:
+        A0, g0, N0 = 0.1, 0.4, 1.0
+        _p('curve_fit seed failed, using defaults')
+    _p(f'seed: A={A0:.4g} gamma={g0:.3f}' + (f' N={N0:.3f}' if free_N else ''))
+
+    # ── seed walkers inside the prior ──────────────────────────────────────────
+    ndim    = 3 if free_N else 2
+    g_seed  = min(max(g0, 1e-2), gamma_max - 1e-2)
+    N_seed  = min(max(N0, n_bounds[0] + 1e-2), n_bounds[1] - 1e-2)
+    seed    = np.array([max(A0, 1e-3), g_seed] + ([N_seed] if free_N else []))
+    scatter = np.array([max(0.05 * seed[0], 1e-3), 0.03] + ([0.03] if free_N else []))
+
+    pos = np.empty((nwalkers, ndim))
+    for k in range(nwalkers):
+        for _ in range(200):
+            trial = seed + scatter * np.random.randn(ndim)
+            if np.isfinite(_sp_logprior(trial, free_N, n_prior, n_bounds, gamma_max)):
+                pos[k] = trial
+                break
+        else:
+            _p('could not seed walkers inside prior — SKIPPING')
+            return None
+
+    # ── run ────────────────────────────────────────────────────────────────────
+    sampler = emcee.EnsembleSampler(
+        nwalkers, ndim, _sp_logpost,
+        args=(dt, sf_obs, sf_cs, log_err, free_N, n_prior, n_bounds, gamma_max))
+    _p('running star+powerlaw MCMC...')
+    sampler.run_mcmc(pos, nsteps, progress=progress)
+    chain = sampler.get_chain(discard=burnin, flat=True)
+
+    A_s, g_s = chain[:, 0], chain[:, 1]
+    N_s = chain[:, 2] if free_N else np.ones(len(chain))
+    A_med, A_lo, A_hi = np.percentile(A_s, [50, 16, 84])
+    g_med, g_lo, g_hi = np.percentile(g_s, [50, 16, 84])
+    N_med, N_lo, N_hi = np.percentile(N_s, [50, 16, 84])
+
+    # amplitude at amp_at, propagated per-sample (keeps the A–gamma correlation)
+    logA_ref = np.log10(A_s) + g_s * np.log10(amp_at)
+    Aref_lo, Aref_med, Aref_hi = 10 ** np.percentile(logA_ref, [16, 50, 84])
+
+    out = {
+        'RA':   old_dict.get('RA', 'sim'),
+        'band': old_dict.get('band', ''),
+        'A_1_splcs':          A_med,
+        'A_1_maxerr_splcs':   A_hi - A_med,
+        'A_1_minerr_splcs':   A_med - A_lo,
+        f'A_{int(amp_at)}_splcs':        Aref_med,
+        f'A_{int(amp_at)}_maxerr_splcs': Aref_hi - Aref_med,
+        f'A_{int(amp_at)}_minerr_splcs': Aref_med - Aref_lo,
+        'gamma_splcs':        g_med,
+        'gamma_maxerr_splcs': g_hi - g_med,
+        'gamma_minerr_splcs': g_med - g_lo,
+        'N_splcs':            N_med,
+        'N_maxerr_splcs':     N_hi - N_med,
+        'N_minerr_splcs':     N_med - N_lo,
+        'n_bins_splcs':       len(dt),
+    }
+
+    # degeneracy / non-variability flags — expected outcomes, not errors
+    if A_med < 3 * (A_med - A_lo):
+        out['flag_splcs'] = 'A~0 (non-variable; gamma unconstrained)'
+        _p('WARNING: A consistent with 0 — likely non-variable; gamma unconstrained')
+    elif free_N and (N_hi - N_lo) > 1.0:
+        out['flag_splcs'] = 'N poorly constrained (power law dominates)'
+        _p('WARNING: N poorly constrained — no visible star-floor regime')
+    else:
+        out['flag_splcs'] = 'ok'
+
+    _p(f"A1={A_med:.4g} +{A_hi-A_med:.2g}/-{A_med-A_lo:.2g} | "
+       f"gamma={g_med:.3f} +{g_hi-g_med:.3f}/-{g_med-g_lo:.3f} | "
+       f"N={N_med:.2f} | {len(dt)} bins | {out['flag_splcs']}")
+
+    # ── plot ────────────────────────────────────────────────────────────────────
+    if plot or save_plot:
+        import matplotlib.pyplot as plt
+        order = np.argsort(dt)
+        dtf = np.logspace(np.log10(dt.min()), np.log10(dt.max()), 100)
+        cs_interp = np.interp(np.log10(dtf), np.log10(dt[order]), sf_cs[order])
+        fig = plt.figure(figsize=(8, 6))
+        plt.errorbar(dt, sf_obs, yerr=sf_err_lin, fmt='o', c='k', capsize=3,
+                     label='source (uncorrected)')
+        plt.plot(dt[order], sf_cs[order], 's-', c='lightgrey', label='calstar floor')
+        plt.plot(dtf, sf_star_plaw(dtf, A_med, g_med, N_med, cs_interp),
+                 'r-', lw=2, label='star + power law')
+        plt.plot(dtf, A_med * dtf ** g_med, 'r--', lw=1.5, label='intrinsic power law')
+        plt.xscale('log'); plt.yscale('log')
+        plt.xlabel('Time diff (days)'); plt.ylabel('SF (mag)')
+        plt.legend(); plt.grid(alpha=0.3)
+        if save_plot and path is not None:
+            fn = path if str(path).endswith('.png') else \
+                 f"{path}/splcs_fit_{out['RA']}_{out['band']}.png"
+            plt.savefig(fn, dpi=130, bbox_inches='tight'); _p(f'saved {fn}')
+        if plot:
+            plt.show()
+        else:
+            plt.close(fig)
+
+    return out
+
 
 def parse_to_dict(series_str):
     """

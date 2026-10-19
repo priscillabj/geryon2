@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 # PROPS   = os.path.expanduser("~/results/linmix_merged_props.parquet")
 # PROPS   = os.path.expanduser("~/results/bat_master_zmadflux2.parquet")
 # PROPS   = os.path.expanduser("~/results/bat_master_zmadflux_sigma>10.parquet")
-RESULTS = os.path.expanduser("~/results")
+RESULTS = os.path.expanduser("~/results/SF_paramspace")
 BAND_COLOR = {'g': 'mediumseagreen', 'r': 'firebrick', 'i': 'goldenrod'}
 
 # clasf groups (reconcile with df['clasf'].value_counts()):
@@ -50,12 +50,12 @@ def scatter(PROPS, band, par, fit_model, CL=False):
     print(f"scatter z{band}: {len(sub)} sources grouped by {par}")
 
     is_cand = pd.Series(False, index=sub.index)
-    if CL:
-        OUR_CL = os.path.expanduser(f"~/results/A_365_{fit_model}_CL_overlay.parquet")
-        OUR_CAND = pd.to_numeric(load(OUR_CL, band, fit_model)["bat_index"],
-                                 errors="coerce").values
-        is_cand = pd.to_numeric(sub["bat_index"], errors="coerce").isin(OUR_CAND)
-        print(f"  this work: {int(is_cand.sum())} candidates in sample")
+    # if CL:
+    #     OUR_CL = os.path.expanduser(f"~/results/A_365_{fit_model}_CL_overlay.parquet")
+    #     OUR_CAND = pd.to_numeric(load(OUR_CL, band, fit_model)["bat_index"],
+    #                              errors="coerce").values
+    #     is_cand = pd.to_numeric(sub["bat_index"], errors="coerce").isin(OUR_CAND)
+    #     print(f"  this work: {int(is_cand.sum())} candidates in sample")
 
     fig, ax = plt.subplots(figsize=(7, 5))
     for types, color, label, hollow in GROUPS:
@@ -86,8 +86,8 @@ def scatter(PROPS, band, par, fit_model, CL=False):
                     fillstyle="none", markeredgecolor="black", markeredgewidth=2,
                     markersize=15, linestyle="none",
                     label=f"Temple+22 (n={len(cl1)})")
-        ax.plot([], [], "D", fillstyle="none", markeredgecolor="0.3", markeredgewidth=2.5,
-                markersize=10, linestyle="none", label=f"This work (n={int(is_cand.sum())})")
+        # ax.plot([], [], "D", fillstyle="none", markeredgecolor="0.3", markeredgewidth=2.5,
+        #         markersize=10, linestyle="none", label=f"This work (n={int(is_cand.sum())})")
 
     ax.set_xlabel(r"$\gamma$  (SF slope)")
     ax.set_ylabel(r"$A_{365}$")
@@ -143,7 +143,7 @@ if __name__ == "__main__":
     p.add_argument("--overlay", help="second parquet drawn as outlined bars over --master")
     p.add_argument("--band", default="g", choices=["g", "r", "i"])
     p.add_argument("--par", default="clasf", help="clasf column to group the scatter by")
-    p.add_argument("--fit_model", default="spl", choices=["spl", "bpl"])
+    p.add_argument("--fit_model", default="boot", choices=["spl", "bpl", "boot"])
     p.add_argument("--CL", action="store_true", help="mark Temple+22 changing-look AGN in the scatter")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--scatter", action="store_true", help="amp vs gamma scatter (default)")

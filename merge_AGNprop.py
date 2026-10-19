@@ -45,10 +45,10 @@ import sf_keys                       # single source of truth for fit-key names
 PARTIALS_ROOT = Path(os.environ["HOME"]) / "results" / "partials"
 # OUT_MERGED = os.path.expanduser("~/results/SFfit_merged_zmadflux.parquet")
 OUT_MERGED = os.path.expanduser("~/results/SFfit_tmp.parquet")
-# OUT_PROPS  = os.path.expanduser("~/results/bat_master_zmadflux_sigma>10.parquet")
-# OUT_PNG    = os.path.expanduser("~/results/amp_vs_gamma_byclasf_sigma>10_2.png")
-OUT_PROPS  = os.path.expanduser("~/results/bat_master.parquet")
-OUT_PNG    = os.path.expanduser("~/results/amp_vs_gamma_byclasf_all2.png")
+OUT_PROPS  = os.path.expanduser("~/results/bat_master_sigma>10_boot.parquet")
+OUT_PNG    = os.path.expanduser("~/results/amp_vs_gamma_byclasf_sigma>10_boot.png")
+# OUT_PROPS  = os.path.expanduser("~/results/bat_master_boot.parquet")
+# OUT_PNG    = os.path.expanduser("~/results/amp_vs_gamma_byclasf_all_boot.png")
 
 # --- catalogue paths on geryon2 -------------------------------------------
 # data:      wise_ra, wise_dec, AGN ('TRUE'/'FALSE' strings), bat_index, ctpt_name
@@ -63,8 +63,10 @@ ZMAD_METRICS  = ["ok", "fail_reason", "sigma", "perc", "agn", "cs_mean", "cs_std
 
 # --- plot config (only used with --plots) ---------------------------------
 BAND  = "g"
-MODEL = "spl"
-AMP   = {"spl": "A_365", "bpl": "A_break"}
+# MODEL = "spl"
+MODEL = "boot"
+# AMP   = {"spl": "A_365", "bpl": "A_break"}
+AMP   = {"spl": "A_365", "bpl": "A_break", "boot": "A_365"}
 # reconcile with the printed clasf.value_counts() before trusting the plot:
 TP1 = ["Sy1", "Sy1.2"]             # Type 1        -> black, hollow markers
 SY  = ["Sy1.5"]                    # intermediate  -> C2
@@ -72,12 +74,12 @@ TP2 = ["Sy1.8", "Sy1.9", "Sy2"]    # Type 2        -> C1
 # --------------------------------------------------------------------------
 
 # FIT_TAIL = {"spl": "linmixfit", "bpl": "bplfit"}
-FIT_TAIL = {"spl": "{x}cs_linmixfit", "bpl": "{x}csflat_bplfit"}
+FIT_TAIL = {"spl": "{x}cs_linmixfit", "bpl": "{x}csflat_bplfit", "boot": "{x}cs_boot"}
 band_re  = re.compile(r"_z(\w)_")          # matches _zg_merged AND _zi_ccd13_
 # pkl_re   = re.compile(r"_\d+cs_(linmix|bpl)fit\.pkl$")
 pkl_re   = re.compile(r"_(?:%s)\.pkl$" % "|".join(
     re.escape(t).replace(r"\{x\}", r"\d+") for t in FIT_TAIL.values()))
-_STRIP   = re.compile(r"_(spl|bpl)$")
+_STRIP   = re.compile(r"_(spl|bpl|boot)$")
 ID       = ["lc_file", "source", "band", "merged", "sci", "RA", "med_mag"]
 
 
@@ -281,11 +283,10 @@ def main():
         fit = fit.drop(columns=[c for c in ID if c != "lc_file"])
         df = df.merge(fit, on="lc_file", how="left", validate="one_to_one")
 
-    print(f"{len(df)} light curves; "
-          f"{df.get('gamma_spl', pd.Series(dtype=float)).notna().sum()} with spl, "
-          f"{df.get('gamma_bpl', pd.Series(dtype=float)).notna().sum()} with bpl")
+    print(f"{len(df)} light curves; " + ", ".join(
+          f"{df.get(f'gamma_{m}', pd.Series(dtype=float)).notna().sum()} with {m}" for m in FIT_TAIL))
     print(df.groupby(["band", "merged", "sci"], dropna=False).size())
-    print("fit columns:", [c for c in df.columns if c.endswith(("_spl", "_bpl"))])
+    print("fit columns:", [c for c in df.columns if c.endswith(tuple(f"_{m}" for m in FIT_TAIL))])
 
     os.makedirs(os.path.dirname(out_merged), exist_ok=True)
     df.to_parquet(out_merged, index=False)   # checkpoint, so the pkl loop isn't lost
@@ -331,7 +332,7 @@ def plot(df, out_png):
     missing = [c for c in (gcol, ycol, *xerr_cols, *yerr_cols) if c not in df.columns]
     if missing:
         raise SystemExit(f"plot columns absent: {missing}\navailable: "
-                         f"{[c for c in df.columns if c.endswith(('_spl', '_bpl'))]}")
+                         f"{[c for c in df.columns if c.endswith(tuple(f'_{m}' for m in FIT_TAIL))]}")
 
     sub = df[(df["band"] == BAND) & (df["merged"] == True) & (df["sci"] == False) &
              (df[f"valid_{MODEL}"] == True) &

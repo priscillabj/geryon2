@@ -115,11 +115,14 @@ def _find_target_obj(lc_path: Path, tgt: SkyCoord, MATCH_RADIUS_ARCSEC: float = 
 
 def _running_median(grp: pd.DataFrame, edges: np.ndarray):
     cx, my = [], []
+    print(len(grp))
     for lo, hi in zip(edges[:-1], edges[1:]):
         s = grp[(grp["med"] >= lo) & (grp["med"] < hi)]["std"] * 1000
+        # print(len(s))
         if len(s) >= 5:
-            cx.append(0.5 * (lo + hi))
-            my.append(float(np.median(s)))
+            cx.append(0.5 * (lo + hi))         # list of magnitude bin centres
+            my.append(float(np.median(s)))     # the median scatter in each magnitude bin, in millimag
+    # print(cx, my)
     return cx, my
 
 def _running_mad(grp: pd.DataFrame, edges: np.ndarray):
@@ -134,13 +137,15 @@ def _running_mad(grp: pd.DataFrame, edges: np.ndarray):
 # ── core functions ────────────────────────────────────────────────────────────
 
 def aggregate_lightcurves(df: pd.DataFrame, mag_column='MAG_4_TOT_AB') -> pd.DataFrame:
+    print(df.head())
     """Aggregate per-object statistics from the light curve DataFrame."""
     return (
         df.groupby("object_index")
         .agg(
-            n_org=(mag_column, "count"),
-            med=(mag_column,   "median"),
-            std=(mag_column,   "std"),
+            n_org=(mag_column, "count"),   # number of non-NaN magnitudes in the star of a given object_index
+            med=(mag_column,   "median"),  # median magnitude of a given object_index
+            std=(mag_column,   "std"),     # standard deviation of its magnitudes (pandas uses ddof = 1), 
+                                           #    which is its scatter.
         )
         .dropna(subset=["std"])
     )

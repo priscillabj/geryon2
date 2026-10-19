@@ -38,6 +38,7 @@ import pickle
 import re
 import sys
 import time
+import gc
 import traceback
 from collections import defaultdict
 from pathlib import Path
@@ -332,7 +333,8 @@ def process(ra, dec, paths, args):
 
     lag_draws = samples["lag"]
     entry = {
-        "RA": ra, "DEC": dec, "bands": list(BANDS), "valid": True,
+        "RA": ra, "DEC": dec, "lc_file": os.path.basename(path),
+        "bands": list(BANDS), "valid": True,
         "n_epochs": nep, "baseline": baseline, "seed": seed,
         "zero_mean": bool(args.zero_mean), "lag_max": args.lag_max,
         "tau_med": float(np.exp(summary["log_drw_scale"]["median"])),
@@ -346,6 +348,8 @@ def process(ra, dec, paths, args):
         "rhat": rhat, "ess": ess,
     }
     atomic_pickle(entry, out)
+    jax.clear_caches()
+    gc.collect()
 
     if args.plots:
         fig, (a0, a1) = plt.subplots(1, 2, figsize=(13, 4.5),

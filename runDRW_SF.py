@@ -192,7 +192,8 @@ def load_master(path):
     if path is None:
         return None
     df = pd.read_parquet(os.path.expanduser(path))
-    df = df[["lc_file"] + [c for c in df.columns if c.endswith(("_spl", "_bpl"))]]
+    # df = df[["lc_file"] + [c for c in df.columns if c.endswith(("_spl", "_bpl"))]]
+    df = df[["lc_file"] + [c for c in df.columns if c.endswith(("_spl", "_bpl", "_boot"))]]
     n = len(df)
     df = df.drop_duplicates("lc_file")
     if len(df) != n:
@@ -218,11 +219,17 @@ def load_sf_entry(path, x, partials_root, master=None):
         if base in master.index:
             entry.update(master.loc[base].dropna().to_dict())
     else:
-        for fit in sorted(d.glob(f"{base}_{x}cs*fit.pkl")):   # _linmixfit/_bplfit
+        # for fit in sorted(d.glob(f"{base}_{x}cs*fit.pkl")):   # _linmixfit/_bplfit
+        for tail, sfx in (("boot", "_boot"), ("linmixfit", "_spl")):
+            fit = d / f"{base}_{x}cs_{tail}.pkl"
+            if not fit.exists():
+                continue
             with open(fit, "rb") as f:
                 got = pickle.load(f)
             if isinstance(got, dict):
-                entry.update(got)
+                # entry.update(got) # lstrip: legacy linmix pkls use _A_365_spl / _gamma_spl
+                entry.update({k.lstrip("_"): v for k, v in got.items()
+                              if k.endswith(sfx)})
     entry.setdefault("DEC", dec)
     return entry
 
@@ -239,13 +246,21 @@ def empirical_sf(e):
     uperr = e["SFmaxerr"][e["SFmaxerr"].index.isin(sf.index)]
     loerr = e["SFminerr"][e["SFminerr"].index.isin(sf.index)]
 
-    spl = bpl = None
-    if "A_365_spl" in e and "gamma_spl" in e:
+    boot = spl = None
+    if e.get("A_365_boot") is not None and e.get("gamma_boot") is not None:
+         boot = e["A_365_boot"] * (dt / 365.0) ** e["gamma_boot"]
+    if e.get("A_365_spl") is not None and e.get("gamma_spl") is not None:
         spl = e["A_365_spl"] * (dt / 365.0) ** e["gamma_spl"]
-    if all(k in e for k in ("A_1_bpl", "gamma_bpl", "dt_break_bpl")):
-        bpl = broken_power_law_flat(dt, e["A_1_bpl"], e["gamma_bpl"],
-                                    e["dt_break_bpl"])
-    return sf, uperr, loerr, spl, bpl, dt
+
+
+    # spl = bpl = None
+    # if "A_365_spl" in e and "gamma_spl" in e:
+    #     spl = e["A_365_spl"] * (dt / 365.0) ** e["gamma_spl"]
+    # if all(k in e for k in ("A_1_bpl", "gamma_bpl", "dt_break_bpl")):
+    #     bpl = broken_power_law_flat(dt, e["A_1_bpl"], e["gamma_bpl"],
+    #                                 e["dt_break_bpl"])
+    # return sf, uperr, loerr, spl, bpl, dt
+    return sf, uperr, loerr, boot, spl, dt
 
 
 # ----------------------------------------------------------------------- helpers
@@ -335,7 +350,8 @@ def process(path, args, master=None):
     amp = float(np.exp(summary["log_drw_sigma"]["median"]))
     gp2 = gpStat2(Exp(scale=tau, sigma=amp))
 
-    SFdata, uperr, loerr, spl, bpl, dt = empirical_sf(sf_entry)
+    # SFdata, uperr, loerr, spl, bpl, dt = empirical_sf(sf_entry)
+    SFdata, uperr, loerr, boot, spl, dt = empirical_sf(sf_entry)
     if len(dt) == 0:
         return bail("empty_SF_bins")
     ts = np.logspace(0, 4, args.n_grid)
@@ -360,9 +376,10 @@ def process(path, args, master=None):
         "has_jitter": bool(args.jitter), "mag": sf_entry.get("mag"),
         # empirical
         "SFdata": SFdata, "SFuperr": uperr, "SFloerr": loerr,
-        "spl_yfit": spl, "bpl_yfit": bpl, "dt": dt,
+        # "spl_yfit": spl, "bpl_yfit": bpl, "dt": dt,
+        "boot_yfit": boot,"spl_yfit": spl, "dt": dt,
         "sf_fit": {k: v for k, v in sf_entry.items()
-                   if k.endswith(("_spl", "_bpl"))},
+                   if k.endswith(("_spl", "_bpl", "_boot"))},
         # model
         "tau_med": tau, "amp_med": amp,
         "DRW_SF_dt": np.asarray(gp2.sf(dt)),   # median-param SF on empirical bins
@@ -378,16 +395,24 @@ def process(path, args, master=None):
         fig, ax = plt.subplots(figsize=(7, 5))
         ax.errorbar(dt, SFdata, yerr=(loerr, uperr), fmt="o", c="k", capsize=3,
                     label="empirical SF")
-        if spl is not None:
-            ax.plot(dt, spl, ls="--", label="single power law")
-        if bpl is not None:
-            ax.plot(dt, bpl, ls=":", label="broken power law")
+        # if spl is not None:
+        #     ax.plot(dt, spl, ls="--", label="single power law")
+        # if bpl is not None:
+        #     ax.plot(dt, bpl, ls=":", label="broken power law")
+        if boot is not None:
+            ax.plot(dt, boot, ls="--", label="power law + stars")
+        if args.spl and spl is not None:
+            ax.plot(dt, spl, ls=":", label="single power law (linmix)")
+        
+        for sf in mcmc_sf[::50]:
+            ax.plot(ts, sf, c="tab:green", alpha=0.15, lw=0.8, zorder=1)
+        
         ax.plot(ts, gp2.sf(ts), c="tab:green", lw=2, label="DRW (posterior median)")
-        ax.fill_between(ts, q[0], q[2], color="tab:green", alpha=0.25)
+        # ax.fill_between(ts, q[0], q[2], color="tab:green", alpha=0.25)
         ax.set(xscale="log", yscale="log", xlabel="Time diff (days)",
                ylabel="Structure Function (mag)")
         ax.legend(fontsize=9)
-        fig.savefig(os.path.join(args.outdir, f"sf_{ra}_{dec}_z{band}.png"),
+        fig.savefig(os.path.join(args.outdir, f"sf_boot_{ra}_{dec}_z{band}.png"),
                     dpi=130, bbox_inches="tight")
         plt.close(fig)
 
@@ -425,6 +450,9 @@ def main():
     p.add_argument("--n-search", type=int, default=500)
     p.add_argument("--n-best", type=int, default=10)
     p.add_argument("--plots", action="store_true")
+    p.add_argument("--spl", action="store_true",
+                   help="overlay the linmix SPL fit (_linmixfit.pkl, or the _spl "
+                        "columns of --master)")
     p.add_argument("--force", action="store_true")
     args = p.parse_args()
 
